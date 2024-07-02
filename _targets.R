@@ -16,6 +16,7 @@ tar_option_set(packages = c("arrow",  "zoomerjoin", "lubridate", "zipcodeR", "ti
 							 garbage_collection = T,
 							 )
 
+# This determines how many threads Zoomerjoin will use
 Sys.setenv(RAYON_NUM_THREADS=30)
 
 list(
@@ -32,7 +33,7 @@ list(
 						 format = "file_fast"
 						 ),
 
-	# Run LSH To create rough dataset
+	# Run LSH To create 'rough' / blocked dataset
 	tar_target(
 		lshed_data, locality_sensitive_hash(physician_data, voter_files),
 		format = "parquet"

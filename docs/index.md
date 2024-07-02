@@ -1,5 +1,7 @@
 # Physician to Voter Documentation
 
+[beniamino.green@tuta.com](mailto:beniamino.green@tuta.com) | [beniamino.green@yale.edu](mailto:beniamino.green@yale.edu)
+
 Welcome to our repository for the physician-to-voter linkage and subsequent
 analyses.
 
@@ -22,8 +24,6 @@ This repository is organized as follows:
 │   ├── matches_by_state.png
 │   ├── processing.png
 │   └── screenshot.png
-├── linkage_slides.Rmd
-├── pres.bib
 ├── README.md
 └── _targets.R
 ```
@@ -40,16 +40,6 @@ re-running the pipeline after each change. The pipeline can be run by calling
 
 * The `figures/` directory holds the outputs produced by the pipeline. A seperate
 `tables/` folder will likely be created further along in the project.
-
-* `linkage_slides.Rmd` and `pres.bib` are both used to generate the slides shared
-with the team.
-
-## Dependency Graph:
-
-Here is a path of the code dependencies in the repository. It is not
-live-updating, and so will not respond to changes in the architecture /
-pipeline, but it is useful to see a roughly-current summary of the analysis
-code now.
 
 ## Other Useful Links:
 
