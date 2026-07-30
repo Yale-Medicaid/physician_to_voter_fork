@@ -13,7 +13,7 @@ dollar_to_float <- function(x){
 #' @return a list of cleaned, standardized parquet files
 #'
 process_voter_data <- function(raw_l2_files) {
-	output_folder_names <- gsub(".*Uniform--(.*).tab","data/processed_voter_data/\\1",raw_l2_files)
+	output_folder_names <- gsub(".*Uniform--(.*).tab","trunk/derived/processed_voter_data/\\1",raw_l2_files)
 	walk(output_folder_names, dir.create, showWarnings=F, recursive=T)
 
 	plan(multisession, workers=30)
@@ -116,7 +116,7 @@ process_voter_data <- function(raw_l2_files) {
 
 	future_map2(raw_l2_files, output_folder_names, transfer_to_parquets)
 
-	return(list.files("data/processed_voter_data/", recursive = T, full.names=T))
+	return(list.files("trunk/derived/processed_voter_data/", recursive = T, full.names=T))
 }
 
 

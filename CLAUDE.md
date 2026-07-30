@@ -193,54 +193,66 @@ by the existing code.
 *Filled in from the read-only pass (2026-07-30). Reflects actual structure, which
 differs substantially from the placeholder's assumptions — see "does not exist" below.*
 
-- `_targets.R` — pipeline definition (root). 10 targets, no target factories, no
-  `_targets.yaml`, no `tar_map`/branching. `source()`s five `code/*.R` files;
-  `match_diagnostics.R` and `random_forest_match_model.R` are commented out.
-  Note: uses `library(targets)` + bare `tar_target()`, not the namespaced style
-  this file prescribes elsewhere.
-- `code/` — all target functions plus standalone scripts, flat, organized by
-  **pipeline stage via numeric prefix** (not by method). No `R/` directory.
-  - `00_unzip_l2.R` — standalone, NOT a target. Unzips L2 from a mounted Yale
-    `B:/` network drive into `data/rawl2/`. Hardcoded to **2018 only**.
-  - `01_extract_l2.R` — `process_voter_data()`; TSV → parquet conversion.
-  - `03_clean_physician_data.R` — `clean_physician_data()`; NPPES+CMS+NUCC merge.
-    (There is no `02_`.)
-  - `04_locality_sensitive_hash.R` — `locality_sensitive_hash()`; zoomerjoin LSH
+- `_targets.R` — pipeline definition (root). **9 targets** (was 10; `dt_match_data`
+  went with the flow-diagram matcher), no target factories, no `_targets.yaml`, no
+  `tar_map`/branching. `source()`s four `R/*.R` files; `match_diagnostics.R` is
+  commented out. Note: uses `library(targets)` + bare `tar_target()`, not the
+  namespaced style this file prescribes elsewhere — not yet reconciled.
+- `physician_to_voter.Rproj` — RStudio project file. Tabs, not spaces, matching
+  the existing code.
+- `R/` — all target functions plus standalone scripts, flat, **unnumbered**. The
+  old `code/` directory and its `0N_` prefixes are gone.
+  - `unzip_l2.R` — standalone, NOT a target. Unzips L2 from a mounted Yale
+    `B:/` network drive into `trunk/raw/rawl2/`. Hardcoded to **2018 only**.
+  - `extract_l2.R` — `process_voter_data()`; TSV → parquet conversion.
+  - `clean_physician_data.R` — `clean_physician_data()`; NPPES+CMS+NUCC merge.
+  - `locality_sensitive_hash.R` — `locality_sensitive_hash()`; zoomerjoin LSH
     blocking + comparison-feature construction.
-  - `05_match_model.R` — `descision_tree_matcher()` [sic]; the flow-diagram
-    rules-based matcher.
-  - `06_random_forest.R` — `make_X_matrix()` + `add_rf_match_predictions_to_df()`;
-    the **active** RF method (`grf::probability_forest`).
+  - `random_forest.R` — `make_X_matrix()` + `add_rf_match_predictions_to_df()`;
+    **the only matching method.** `grf::probability_forest`.
   - `make_training_data.R` — standalone; samples LSH output into labeller
     partitions + writes two rule-labelled files.
   - `label.R` — standalone; interactive CLI hand-labelling + inter-coder kappa.
-  - `random_forest_match_model.R` — **superseded** older RF variant (10-feature
-    `agree_mat`, `load()`s an `.RData` labelled file). Not sourced.
-  - `naive_bayes_match_model.R` — **dead code**; byte-for-byte identical to
-    `random_forest_match_model.R` except the function name; its naive-Bayes body
-    is commented out with "we no longer use naive bayes". Not sourced.
   - `match_diagnostics.R` — `make_match_diagnostic_plots()`; sourced-out/inactive.
-- `data/` — **empty in git except a tracked `.gitkeep`.** All contents are
-  gitignored (`data/*`, `!data/.gitkeep`); every input is placed by hand. Paths
-  the pipeline expects, with sizes observed from the former DVC pointers:
-  `rawl2/` (361 GB, 102 files), `NPPES_Data_Dissemination_February_2023/`
-  (9.4 GB, 10 files), `DAC_NationalDownloadableFile.csv` (623 MB),
-  `nucc_taxonomy_230.csv` (513 KB), `labelled_training_data/` (4 files, 812 KB),
-  `unlabelled_training_data/` (3 files, 495 KB).
+- **Deleted** in `refactor/project-layout` (recoverable from git history):
+  `05_match_model.R` (the flow-diagram `descision_tree_matcher()`),
+  `random_forest_match_model.R` (superseded 10-feature RF), and
+  `naive_bayes_match_model.R` (a byte-for-byte twin of the latter). The one thing
+  worth remembering from the superseded RF: it fed four features the current
+  model does not — `medical` (occupation-derived), `CommercialData_EstimatedHHIncome`,
+  `CommercialData_Education`, `Voters_Gender` — and `ntile`-binned everything.
+  Treat those as feature candidates, not as code to restore; `grf` handles
+  continuous features and NAs natively, so the binning was a downgrade.
+- `trunk/` — the data root. Only `README.md` and four `.gitkeep` markers are
+  tracked; all data is gitignored. See `trunk/README.md` for the full layout.
+  - `trunk/raw/` — inputs the pipeline reads but does not produce. Sizes observed
+    from the former DVC pointers: `rawl2/` (361 GB, 102 files),
+    `NPPES_Data_Dissemination_February_2023/` (9.4 GB, 10 files),
+    `DAC_NationalDownloadableFile.csv` (623 MB), `nucc_taxonomy_230.csv` (513 KB),
+    `labelled_training_data/` (4 files, 812 KB), `unlabelled_training_data/`
+    (3 files, 495 KB).
+  - `trunk/derived/` — `processed_voter_data/`, written by `process_voter_data()`.
+    Regenerable; safe to delete.
+  - `trunk/analysis/` — created for analysis outputs, currently unused. Note that
+    `match_diagnostics.R` still writes to `figures/`, not here.
+  - The two training-data directories live under `raw/`, not `derived/`: they began
+    as LSH samples, but their labels are human judgements the pipeline cannot
+    regenerate, so losing them means re-doing the annotation.
   - NPPES is a **manually-placed CMS dissemination file**, not NBER — see
     "NPPES data" section; nothing in the code downloads it.
-  - `data/processed_voter_data/` — written at runtime by `process_voter_data()`.
   - `unlabelled_training_data/anthony.parquet` is **abandoned** — never labelled,
     not consumed by anything.
+- `job_outputs/` — gitignored, for SLURM job output. Nothing writes here yet.
 - `docs/` — mkdocs source, only three pages: `index.md` (repo layout + contacts),
   `pipeline_steps.md` (per-target prose, "Last updated 17/06/24"),
   `instructions.md` (replication steps). `mkdocs.yml` at root.
   **No methodology writeup of the flow-diagram logic or the RF approach, and no
   reported performance numbers anywhere.**
 - `figures/` — pipeline outputs + diagrams. `at_a_glance.png` (data-flow overview)
-  and `processing.png` (**the flow-diagram decision tree** — this image is the
-  closest thing to a spec for `05_match_model.R`). Also `age_dist_hist.{pdf,png}`,
-  `matches_by_state.{pdf,png}`, `screenshot.png`, `targets_screenshot.PNG`.
+  and `processing.png` (the flow-diagram decision tree — now a historical record
+  of the deleted matcher, not a spec for anything live). Also
+  `age_dist_hist.{pdf,png}`, `matches_by_state.{pdf,png}`, `screenshot.png`,
+  `targets_screenshot.PNG`. Predates `trunk/analysis/`; not yet migrated.
 - `dependency_graph.png` (root) — **stale** `tar_visnetwork()` export. Shows
   targets `labelled_file`, `match_diagnostic_plots`, `match_slides` that no longer
   exist in `_targets.R`.
@@ -251,12 +263,11 @@ differs substantially from the placeholder's assumptions — see "does not exist
   `.renvignore` are all gone; see "Dependencies" below. No Python in the project
   either — no `.py`, no notebooks, no `requirements.txt`.
 
-**Does not exist** (placeholder assumed these; do not reference them as if present):
-`R/`, `schemas/`, `data/nppes/`, `data/l2_synthetic/`, `slurm/`, `tests/`.
-There is **no test suite of any kind** (no testthat, no `tar_test`), **no SLURM
-submission scripts**, and **no committed schema documentation** — the L2 schema
-exists only as inline `col_types` vectors duplicated in `01_extract_l2.R` and
-`04_locality_sensitive_hash.R`.
+**Does not exist** — do not reference these as if present: `schemas/`, `data/`
+(replaced by `trunk/`), `slurm/`, `tests/`. There is **no test suite of any kind**
+(no testthat, no `tar_test`), **no SLURM submission scripts**, and **no committed
+schema documentation** — the L2 schema exists only as inline `col_types` vectors
+duplicated in `R/extract_l2.R` and `R/locality_sensitive_hash.R`.
 
 ## Documentation
 Methodology documentation lives in the mkdocs `docs/` source files and is the
