@@ -51,13 +51,12 @@ the original dataframe with this vector of predictions added as a column named
 
 ### `code/00_unzip_l2.R`
 
-!!! Note inline end
+!!! Warning inline end
 
-    If you don't have access to the Network drive that houses the voter
-    data, you will not be able to run this script. Instead, you can use [Data
-    Version Control](https://dvc.org/) to pull a cached version of the files.
-    To do this, simply install dvc using pip + the included `requirements.txt`
-    file and run `dvc pull` from within the repository.
+    This script needs access to the Yale network drive that houses the voter
+    data; without it the script cannot run and there is no cached alternative.
+    The voter file is licensed and cannot be redistributed, so it has to come
+    from an approved environment.
 
 This is a standalone script, and is not integrated into the build system. It is
 responsible for unzipping the raw l2 files, which are kept on a network drive,
