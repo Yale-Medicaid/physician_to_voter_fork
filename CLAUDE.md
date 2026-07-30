@@ -293,9 +293,7 @@ compatibility fixes in `fix/current-package-compat`:
 | `tarchetypes` | 0.14.1 | 0.9.0 | pipeline |
 | `arrow` | 25.0.0 | 16.1.0 | L2 parquet read/write |
 | `zoomerjoin` | 0.2.3 | 0.1.4 | LSH blocking (in-house pkg) |
-| `duckplyr` | 1.2.1 | 0.3.2 | LSH physician-side prep |
 | `grf` | 2.6.1 | 2.3.2 | `probability_forest` — the RF matcher |
-| `zipcodeR` | 0.3.5 | 0.3.5 | `zip_distance` feature |
 | `tidyverse` | 2.0.0 | 2.0.0 | throughout |
 | `lubridate` | 1.9.5 | 1.9.3 | date parsing |
 | `furrr` | 0.4.0 | 0.3.1 | parallel L2 conversion |
@@ -305,9 +303,10 @@ compatibility fixes in `fix/current-package-compat`:
 | `yesno` | 0.1.3 | 0.1.2 | `label.R` interactive prompts |
 | `vcd` | 1.4-14 | 1.4-12 | `label.R` inter-coder kappa |
 
-Also needed: **`terra`** (1.9-34), a `zipcodeR` dependency that does not reliably
-install transitively — `library(zipcodeR)` fails with "there is no package called
-'terra'" if it is missing. Install it explicitly.
+**Removed** (branch `refactor/arrow-and-nber-distance`): `duckplyr` (replaced by
+`arrow`), `zipcodeR` (replaced by the NBER distance database — see below), and
+`terra`, which was only ever a `zipcodeR` dependency. Do not reintroduce any of
+them; `arrow` is the query engine for this project.
 
 The old lockfile pinned **R 4.3.3** and 151 packages in total (the rest
 transitive); full detail is recoverable from git history. Under the tidyverse
@@ -331,6 +330,51 @@ Consequences for `R/locality_sensitive_hash.R`:
   side, **not** `st_2` / `st_mi_2`. The join therefore suffixes them, which is why
   `state_agree` compares `st.x` to `st.y`.
 - **`by` is not optional.** Omitting it errors with `'by_a' must be of length 1`.
+
+### Arrow is the query engine — no duckdb
+`arrow` does all the out-of-memory work: reading the L2 parquet, the voter-side
+derived columns, and the ZIP-distance join. duckdb/duckplyr have been removed and
+should not come back.
+
+Two Arrow gotchas worth knowing before editing `locality_sensitive_hash()`:
+- **Use `coalesce()`, never `replace_na()`.** Arrow has no binding for
+  `replace_na`, and rather than erroring it *silently pulls the whole table into
+  R* with only a warning. In a function that handles the full voter file that
+  turns an out-of-memory query into an in-memory one. Verified that the current
+  code triggers zero "Pulling data into R" fallbacks — keep it that way.
+- The voter-side `mutate()` sits **before** `collect()` deliberately, so it
+  evaluates as the dataset streams. Moving it after `collect()` still works but
+  reverts the memory benefit. Arrow's `paste0` matches base R's NA handling and
+  Arrow honours sequential column references within a single `mutate()`, both
+  verified, so neither is a reason to move it back.
+
+### ZIP distance — NBER database, not zipcodeR
+`zip_dist` comes from the **NBER ZIP Code Distance Database** (100-mile radius,
+ZCTA-based), a `trunk/raw/` input read via `arrow`, joined on `(zip1, zip2)`.
+Source: `https://data.nber.org/distance/zip/2024/100miles/gaz2024zcta5distance100miles.csv`
+— columns `zip1, zip2, miles_to_zcta5`; years 2019–2024 available; radius
+variants 5/25/50/100/500 miles plus a full file.
+
+Properties of the file that the code depends on, all verified empirically:
+- **Same-ZIP pairs are absent.** There are zero rows where `zip1 == zip2`, so
+  they are filled to `0` explicitly after the join. **Do not remove that
+  fill** — without it, a physician practising in the voter's own ZIP gets `NA`
+  for the strongest co-location signal in the model.
+- `(zip1, zip2)` is unique and the file is fully symmetric, so one join direction
+  suffices and the join cannot duplicate or reorder rows.
+- ZIPs must be read with an **explicit string schema**; inferred types strip the
+  leading zeros that many ZIPs carry.
+
+**Feature semantics changed here, not just the plumbing.** `zipcodeR::zip_distance`
+returned an exact distance for any pair. `zip_dist` is now `NA` when the pair is
+farther apart than 100 miles *or* when either side is not a valid ZCTA (PO-box-only
+ZIPs have no ZCTA). `grf` handles the missingness natively, but the existing
+labelled training data was scored with the old exact-distance feature, so RF
+predictions are not directly comparable across the change.
+
+Also note the distance files only cover **2019–2024**, while the project spans
+2018–2025. ZCTA geography moves little year to year, so a single file is used for
+all years rather than matching year-by-year; revisit if that assumption matters.
 
 ### Other findings from the compatibility pass
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
