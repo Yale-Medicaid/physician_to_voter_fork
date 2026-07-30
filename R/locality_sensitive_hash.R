@@ -137,7 +137,11 @@ locality_sensitive_hash <- function(physician_data, voter_files) {
 			# both blocking columns are named `st`, so the join suffixes them
 			state_agree = processed$st.x == processed$st.y,
 			mid_initial_agree = tolower(substr(processed$mid_nm,1,1)) == tolower(substr(processed$Voters_MiddleName,1,1)),
-			mid_name_agree = jaccard_similarity(tolower(processed$mid_nm), tolower(processed$Voters_MiddleName)),
+			# 2-grams here, deliberately, where every other name comparison uses 3 --
+			# middle names are short enough that 3-grams are too coarse. This was
+			# previously jaccard_similarity()'s default rather than an explicit
+			# choice; passed explicitly so it is not "corrected" later.
+			mid_name_agree = jaccard_similarity(tolower(processed$mid_nm), tolower(processed$Voters_MiddleName), 2),
 			phys_mid_name_len = nchar(processed$mid_nm),
 			voters_mid_name_len = nchar(processed$Voters_MiddleName),
 			zip_dist = zip_distance(

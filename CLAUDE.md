@@ -336,9 +336,10 @@ Consequences for `R/locality_sensitive_hash.R`:
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
   whereas `jaccard_inner_join()`'s is `n_gram_width`. The code passes `3`
   positionally for `full_name_sim` but omits it for `mid_name_agree`, so that
-  feature is computed on 2-grams while every other name comparison uses 3.
-  Left as-is — changing it would change model features. **Open question for the
-  user**, not a bug to fix silently.
+  feature was computed on 2-grams while every other name comparison uses 3.
+  **Confirmed intentional** (middle names are short enough that 3-grams are too
+  coarse) and now passed explicitly at the call site, so it reads as a decision
+  rather than an inherited default. Do not "correct" it to 3.
 - `make_X_matrix()` selects 6 columns but emits **7**: `model.matrix.lm(~ -1 + .)`
   expands the logical `mid_initial_agree` into both `...FALSE` and `...TRUE`
   dummies. Harmless for `grf`, but it is a latent failure — if a training set
