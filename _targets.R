@@ -8,8 +8,8 @@ source("R/random_forest.R")
 #source("R/match_diagnostics.R")
 
 
-tar_option_set(packages = c("arrow",  "zoomerjoin", "lubridate", "zipcodeR", "tidyverse",
-														"furrr", "digest", "lubridate", "grf", "duckplyr"
+tar_option_set(packages = c("arrow",  "zoomerjoin", "lubridate", "tidyverse",
+														"furrr", "digest", "lubridate", "grf"
 														),
 							 garbage_collection = T,
 							 # replaces the deprecated format = "file_fast"
@@ -26,6 +26,13 @@ list(
 	tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv", format = "file"),
 	tar_target(raw_voter_files,list.files("trunk/raw/rawl2/", pattern = "*.tab", full.names=T, recursive = T),format = "file"),
 
+	# NBER ZIP Code Distance Database, 100-mile radius, ZCTA-based.
+	# https://data.nber.org/distance/zip/2024/100miles/gaz2024zcta5distance100miles.csv
+	# Columns: zip1, zip2, miles_to_zcta5. Pairs beyond 100 miles are absent, and
+	# same-ZIP pairs are absent too -- see locality_sensitive_hash() for how both
+	# are handled.
+	tar_target(zip_distance_file, "trunk/raw/gaz2024zcta5distance100miles.csv", format = "file"),
+
 	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "parquet"),
 
 	tar_target(voter_files,
@@ -35,7 +42,7 @@ list(
 
 	# Run LSH To create 'rough' / blocked dataset
 	tar_target(
-		lshed_data, locality_sensitive_hash(physician_data, voter_files),
+		lshed_data, locality_sensitive_hash(physician_data, voter_files, zip_distance_file),
 		format = "parquet"
 	),
 
