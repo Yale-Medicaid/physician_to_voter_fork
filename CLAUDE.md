@@ -44,11 +44,12 @@ Data versioning going forward: real data (L2, and anything derived from it) neve
 enters this repo at all, versioned or not — it stays on the HPC. Synthetic data
 is small enough to commit directly as regular git-tracked files, no DVC needed.
 
-**Do not remove the DVC artifacts during the read-only pass or any comprehension
-step.** Note their presence in your summary, but leave them in place. Removal
-happens later as its own dedicated branch/PR (e.g., `chore/remove-dvc`), after
-the initial read-only pass and summary have been reviewed — confirm with the user
-before that PR, and don't bundle DVC removal into unrelated changes.
+**Status: DVC has been removed** (branch `chore/remove-dvc`). `.dvc/`,
+`.dvcignore`, the six `data/*.dvc` pointers, and `requirements.txt` (a pip
+freeze that existed only to install DVC) are all gone, and the replication docs
+no longer reference `dvc pull`. There are no DVC artifacts left to preserve or
+work around. If you encounter a reference to DVC anywhere, it is stale and
+should be flagged.
 
 ## Pipeline structure — `targets`
 This project uses the R `targets` package, not a linear script pipeline. That means:
@@ -219,16 +220,18 @@ differs substantially from the placeholder's assumptions — see "does not exist
     `random_forest_match_model.R` except the function name; its naive-Bayes body
     is commented out with "we no longer use naive bayes". Not sourced.
   - `match_diagnostics.R` — `make_match_diagnostic_plots()`; sourced-out/inactive.
-- `data/` — **contains only six `.dvc` pointer files, no actual data.** Everything
-  real is gitignored (`data/*` with `!data/*.dvc`). Pointers:
-  `rawl2` (361 GB, 102 files), `NPPES_Data_Dissemination_February_2023` (9.4 GB,
-  10 files), `DAC_NationalDownloadableFile.csv` (623 MB),
-  `nucc_taxonomy_230.csv` (513 KB), `labelled_training_data` (4 files, 812 KB),
-  `unlabelled_training_data` (3 files, 495 KB).
+- `data/` — **empty in git except a tracked `.gitkeep`.** All contents are
+  gitignored (`data/*`, `!data/.gitkeep`); every input is placed by hand. Paths
+  the pipeline expects, with sizes observed from the former DVC pointers:
+  `rawl2/` (361 GB, 102 files), `NPPES_Data_Dissemination_February_2023/`
+  (9.4 GB, 10 files), `DAC_NationalDownloadableFile.csv` (623 MB),
+  `nucc_taxonomy_230.csv` (513 KB), `labelled_training_data/` (4 files, 812 KB),
+  `unlabelled_training_data/` (3 files, 495 KB).
   - NPPES is a **manually-placed CMS dissemination file**, not NBER — see
     "NPPES data" section; nothing in the code downloads it.
-  - `data/processed_voter_data/` — written at runtime by `process_voter_data()`,
-    not DVC-tracked, not gitignored by name (caught by `data/*`).
+  - `data/processed_voter_data/` — written at runtime by `process_voter_data()`.
+  - `unlabelled_training_data/anthony.parquet` is **abandoned** — never labelled,
+    not consumed by anything.
 - `docs/` — mkdocs source, only three pages: `index.md` (repo layout + contacts),
   `pipeline_steps.md` (per-target prose, "Last updated 17/06/24"),
   `instructions.md` (replication steps — still DVC-based). `mkdocs.yml` at root.
@@ -244,8 +247,9 @@ differs substantially from the placeholder's assumptions — see "does not exist
 - `.github/workflows/push_website.yml` — mkdocs-material gh-deploy on push to
   `main`/`master`. The only CI.
 - Environment: `renv.lock` + `renv/activate.R` + `.Rprofile` (R deps),
-  `requirements.txt` (Python — DVC and its transitive deps), `shell.nix`
-  (nix shell that just runs `mkdocs serve`), `.renvignore`, `.dvcignore`.
+  `shell.nix` (nix shell that just runs `mkdocs serve`), `.renvignore`.
+  No Python in the project at all any more — no `.py`, no notebooks, no
+  `requirements.txt`.
 
 **Does not exist** (placeholder assumed these; do not reference them as if present):
 `R/`, `schemas/`, `data/nppes/`, `data/l2_synthetic/`, `slurm/`, `tests/`.
