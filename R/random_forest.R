@@ -30,7 +30,8 @@ make_X_matrix <- function(df) {
 #'
 add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data){
 	labelled_training_data <- labelled_training_files %>%
-		map_df(read_parquet)
+		map(read_parquet) %>%
+		list_rbind()
 
 	training_X <- make_X_matrix(labelled_training_data)
 	training_Y <- as.factor(labelled_training_data$match)

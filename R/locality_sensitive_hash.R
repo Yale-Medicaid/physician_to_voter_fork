@@ -49,7 +49,7 @@ locality_sensitive_hash <- function(physician_data, voter_files) {
 	combined_schema <- c(LALVOTERID  = "c", yale_schema, datavant_schema)
 	
 	# Standardize Physician Data
-	phys_data <- duckplyr::as_duckplyr_df(physician_data) %>%
+	phys_data <- duckplyr::as_duckdb_tibble(physician_data) %>%
 		mutate(
 			full_name = tolower(paste0(provider_first_name, provider_middle_name, `provider_last_name_(legal_name)`)),
 			full_name_no_mid = tolower(paste0(provider_first_name, `provider_last_name_(legal_name)`)),
@@ -74,9 +74,9 @@ locality_sensitive_hash <- function(physician_data, voter_files) {
 		collect() %>%
 		mutate(
 			full_name = tolower(paste0(Voters_FirstName, replace_na(Voters_MiddleName, ""), Voters_LastName)), 
-			full_name_no_mid_l2 = tolower(paste0(Voters_FirstName, Voters_LastName)), 
-			st_2 = replace_na(tolower(Residence_Addresses_State),""), 
-			st_mi_2 = tolower(paste0(replace_na(substr(Voters_MiddleName,1,1),""),replace_na(Residence_Addresses_State,""))), 
+			full_name_no_mid_l2 = tolower(paste0(Voters_FirstName, Voters_LastName)),
+			st = replace_na(tolower(Residence_Addresses_State),""),
+			st_mi = tolower(paste0(replace_na(substr(Voters_MiddleName,1,1),""),replace_na(Residence_Addresses_State,""))),
 			medical = grepl("Medical", CommercialData_Occupation, ignore.case = T),
 			na_medical = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown",
 			medical_sub = ifelse(grepl("Medical", CommercialData_Occupation, ignore.case = T),CommercialData_Occupation, "None")
@@ -86,16 +86,22 @@ locality_sensitive_hash <- function(physician_data, voter_files) {
 	print(Sys.time())
 	
 	
-	# Perform LSH on full name blocking on state 
-	join_out_1 <- jaccard_inner_join(phys_data, voter_dataset, block_by = c("st"= "st_2"),
+	# Perform LSH on full name blocking on state
+	# NB: `block_by` takes a single column name present in both tables; the
+	# c("a" = "b") renaming form errors in zoomerjoin (see block_by note below),
+	# which is why the voter-side blocking columns are named to match the
+	# physician side rather than carrying a _2 suffix. `by` must be given
+	# explicitly -- it is not optional.
+	join_out_1 <- jaccard_inner_join(phys_data, voter_dataset,
+															 by = c("full_name" = "full_name"), block_by = "st",
 														 n_gram_width=3, band_width = 7, n_bands = 400, threshold=.7, clean=T, progress=T)
 	
 	print("Finished First Join")
 	print(Sys.time())
 	
 	# Perform LSH on first + last name blocking on state and middle initial
-	join_out_2 <- jaccard_inner_join(phys_data, voter_dataset, 
-															 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = c("st_mi"= "st_mi_2"),
+	join_out_2 <- jaccard_inner_join(phys_data, voter_dataset,
+															 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = "st_mi",
 														 n_gram_width=3, band_width = 7, n_bands = 400, threshold=.7, clean=T, progress=T) %>%
 		filter(nchar(Voters_MiddleName)<=1 | nchar(mid_nm) <= 1)
 		
@@ -128,7 +134,8 @@ locality_sensitive_hash <- function(physician_data, voter_files) {
 	comparison_dataset <- 
 		tibble(
 			full_name_sim = jaccard_similarity(processed$full_name.x, processed$full_name.y, 3), 
-			state_agree = processed$st == processed$st_2,
+			# both blocking columns are named `st`, so the join suffixes them
+			state_agree = processed$st.x == processed$st.y,
 			mid_initial_agree = tolower(substr(processed$mid_nm,1,1)) == tolower(substr(processed$Voters_MiddleName,1,1)),
 			mid_name_agree = jaccard_similarity(tolower(processed$mid_nm), tolower(processed$Voters_MiddleName)),
 			phys_mid_name_len = nchar(processed$mid_nm),
