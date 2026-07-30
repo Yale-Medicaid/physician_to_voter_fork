@@ -1,6 +1,7 @@
 library(tidyverse)
 
-## If you are running this on the server, you can also use DVC to skip this step
+## Requires access to the mounted Yale network drive; there is no cached
+## alternative, as the voter file is licensed and cannot be redistributed.
 
 # Take zip files from B drive. This won't work if you haven't been given access
 # by Yale, and you must mount the drive in the right place

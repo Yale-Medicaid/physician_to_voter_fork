@@ -234,7 +234,7 @@ differs substantially from the placeholder's assumptions — see "does not exist
     not consumed by anything.
 - `docs/` — mkdocs source, only three pages: `index.md` (repo layout + contacts),
   `pipeline_steps.md` (per-target prose, "Last updated 17/06/24"),
-  `instructions.md` (replication steps — still DVC-based). `mkdocs.yml` at root.
+  `instructions.md` (replication steps). `mkdocs.yml` at root.
   **No methodology writeup of the flow-diagram logic or the RF approach, and no
   reported performance numbers anywhere.**
 - `figures/` — pipeline outputs + diagrams. `at_a_glance.png` (data-flow overview)
@@ -246,10 +246,10 @@ differs substantially from the placeholder's assumptions — see "does not exist
   exist in `_targets.R`.
 - `.github/workflows/push_website.yml` — mkdocs-material gh-deploy on push to
   `main`/`master`. The only CI.
-- Environment: `renv.lock` + `renv/activate.R` + `.Rprofile` (R deps),
-  `shell.nix` (nix shell that just runs `mkdocs serve`), `.renvignore`.
-  No Python in the project at all any more — no `.py`, no notebooks, no
-  `requirements.txt`.
+- Environment: `shell.nix` only (a nix shell that just runs `mkdocs serve`).
+  No dependency management of any kind — `renv.lock`, `renv/`, `.Rprofile`, and
+  `.renvignore` are all gone; see "Dependencies" below. No Python in the project
+  either — no `.py`, no notebooks, no `requirements.txt`.
 
 **Does not exist** (placeholder assumed these; do not reference them as if present):
 `R/`, `schemas/`, `data/nppes/`, `data/l2_synthetic/`, `slurm/`, `tests/`.
@@ -321,8 +321,17 @@ either declare it or keep the namespaced form.
 - Do not rewrite history on shared branches (no force-push to `main` or any
   branch others may have pulled) without explicit confirmation.
 
-## First-session task
-Before making any code changes, do a **read-only pass**:
+## First-session task — COMPLETE (2026-07-30)
+**This pass has been done; the checklist below is kept as a record of what it
+covered, not as work to repeat.** Its findings are folded into "Repo map",
+"Dependencies", and the occupation notes above. Key outcomes: NPPES is a
+manually-placed CMS dissemination file (not NBER); the RF training data is
+`data/labelled_training_data/` (two rule-labelled files plus two hand-labelled);
+`CommercialData_Occupation` is the only occupation field used in logic, and
+`OccupationGroup`/`OccupationIndustry` are read but never referenced; the code
+is 2018-only with no year dimension at all.
+
+Original checklist — before making any code changes, do a **read-only pass**:
 1. Read `_targets.R` and any target-factory files to map the actual pipeline
    dependency graph.
 2. Read the existing string-match and RF-match code.
