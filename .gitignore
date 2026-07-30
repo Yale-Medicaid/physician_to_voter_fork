@@ -1,4 +1,9 @@
 _targets/
+
+# Real data never enters the repo. The directory itself is tracked (via
+# .gitkeep) so a fresh clone has somewhere to put local/synthetic inputs.
 data/*
-!data/*.dvc
+!data/.gitkeep
+
 .Rproj.user
+.DS_Store
