@@ -92,6 +92,36 @@ pattern is:
    note above). Treat an empty/missing listing as "no data for this state-year,"
    not as an error condition.
 
+### Implemented in `R/l2.R`
+`resolve_l2_extract(state, year, l2_path)` does exactly the above and returns the single
+resolved leaf, or `NULL` when the state-year has no directory. The root template is the
+`l2_path` constant at the top of `_targets.R`:
+
+```r
+l2_path <- "/home/pg589/project_pi_cdn7/pg589/l2/transformed/vm2/uniform.parquet/state={state}/year={year}"
+```
+
+It stops at `year=` deliberately — `month=/day=` cannot be part of a `glue` template
+because which one is correct is only known at run time.
+
+Branching is `pattern = cross(years, states)` over `years` (2018:2025) and `states`
+(`state.abb` + DC), giving the full 408-branch grid. **Absent state-years are handled by
+the branch returning `NULL`, not by trimming the grid.** Verified on a synthetic full-scale
+tree: 408 branches build with zero errors, aggregation yields 405 paths, 2024 MD/MS/NV are
+absent while other 2024 states are present, and a state-year holding two extract dates
+resolves to the later one.
+
+Two behaviours worth knowing, both verified rather than assumed:
+- `format = "file"` **accepts `NULL`**, and `targets` drops those branches from downstream
+  aggregation automatically — a downstream target receives only the paths that exist, so no
+  `purrr::compact()` is needed for the plain-vector case.
+- `parse_l2_extract_date()` handles unpadded components, so `month=6/day=9` and
+  `month=06/day=09` both parse.
+
+**Do not reuse position-based `get_year()`/`get_state()` helpers from other projects on L2
+paths.** L2 nests `state=` *outside* `year=`; this project's own derived output uses the
+opposite order. `get_l2_state()` / `get_l2_year()` parse by key, not position.
+
 ## L2 schema — stability across years (2018–2025, every year checked)
 The L2 schema is not fully stable across years. Every year 2018–2025 has been
 individually diffed (not sampled/assumed):
