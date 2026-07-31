@@ -42,7 +42,11 @@ The exact paths the pipeline expects are declared as targets at the top of
 
 ## Step 3: Run the pipeline
 
-The R-dependencies are automatically managed by [renv](https://rstudio.github.io/renv/articles/renv.html), which will install any missing packages on startup. This means that you can start the code pipeline by simply running the following lines in an R session running inside the root directory.
+R dependencies are not managed automatically — install them yourself into the R
+library of whatever environment you are running in. The direct dependencies are
+listed in `CLAUDE.md`, and the runtime set is declared in
+`tar_option_set(packages = ...)` at the top of `_targets.R`. Once they are
+available, start the pipeline from an R session in the root directory:
 
 ```r
 > targets::tar_make()
