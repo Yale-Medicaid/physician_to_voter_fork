@@ -19,21 +19,21 @@ anthony_df <- sample_n(training_data, 350)
 ben_df <- sample_n(training_data, 800)
 dohyun_df <- sample_n(training_data, 350)
 
-write_parquet(anthony_df, "data/unlabelled_training_data/anthony.parquet")
-write_parquet(dohyun_df, "data/unlabelled_training_data/dohyun.parquet")
-write_parquet(ben_df, "data/unlabelled_training_data/ben.parquet")
+write_parquet(anthony_df, "trunk/raw/unlabelled_training_data/anthony.parquet")
+write_parquet(dohyun_df, "trunk/raw/unlabelled_training_data/dohyun.parquet")
+write_parquet(ben_df, "trunk/raw/unlabelled_training_data/ben.parquet")
 
 MD_data <- rough_data %>% 
 	filter(Voters_NameSuffix == "MD")  %>% 
 	mutate(match = T)
-write_parquet(MD_data, "data/labelled_training_data/MD_data.parquet")
+write_parquet(MD_data, "trunk/raw/labelled_training_data/MD_data.parquet")
 
 negative_age_data <-  rough_data %>% 
 	filter(year_dist < 10) %>% 
 	mutate(match = F)  %>% 
 	sample_n(800) 
 
-write_parquet(negative_age_data, "data/labelled_training_data/negative_age.parquet")
+write_parquet(negative_age_data, "trunk/raw/labelled_training_data/negative_age.parquet")
 
 
 

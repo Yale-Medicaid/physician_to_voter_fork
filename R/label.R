@@ -2,7 +2,7 @@ library(glue)
 library(arrow)
 library(yesno)
 
-df <- read_parquet("data/labelled_training_data//ben.parquet")
+df <- read_parquet("trunk/raw/labelled_training_data/ben.parquet")
 n <- nrow(df)
 
 for (i in 504:n) {
@@ -22,9 +22,9 @@ for (i in 504:n) {
 	df$match[i] <- yesno2("Do These Records Match?")
 }
 
-write_parquet(df, "data/labelled_training_data/ben.parquet")
+write_parquet(df, "trunk/raw/labelled_training_data/ben.parquet")
 
-dh_data <- read_parquet("data/labelled_training_data/dohyun.parquet")
+dh_data <- read_parquet("trunk/raw/labelled_training_data/dohyun.parquet")
 
 dh_data$match %>% mean()
 df$match %>% mean()

@@ -21,7 +21,7 @@ zip_files <- tibble(file_names = zip_files)  %>%
 stopifnot(length(zip_files) == 51)
 
 # Create output folders
-folder_names <- gsub(".*Uniform--(.*).zip", "data/rawl2/\\1",zip_files)
+folder_names <- gsub(".*Uniform--(.*).zip", "trunk/raw/rawl2/\\1",zip_files)
 walk(folder_names, dir.create, showWarnings=T)
 
 # Unzip Files
