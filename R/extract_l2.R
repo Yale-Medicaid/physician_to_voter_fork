@@ -98,7 +98,7 @@ process_voter_data <- function(raw_l2_files) {
 					Voters_OfficialRegDate = as.Date(Voters_BirthDate, format = "%m/%d/%Y"),
 					Voters_CalculatedRegDate = as.Date(Voters_BirthDate, format = "%m/%d/%Y")
 				) %>%
-				mutate_if(is_character, ~iconv(.x, "UTF-8", "UTF-8", sub = ""))
+				mutate(across(where(is.character), ~iconv(.x, "UTF-8", "UTF-8", sub = "")))
 
 			x %>%
 				select(any_of(names(combined_schema))) %>%

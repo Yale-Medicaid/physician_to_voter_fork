@@ -282,34 +282,73 @@ dependency pinning any more** — packages must be present in the R library of
 whatever environment the pipeline runs in (on the HPC, typically via a module
 load or a shared site library).
 
-Direct dependencies, with the versions the removed lockfile pinned. These are a
-record of a known-working set, not a requirement to match exactly:
+Direct dependencies. The **validated** column is what the code has actually been
+run against (R 4.5.2, aarch64-apple-darwin20, 2026-07-30); the **old lock**
+column is what the removed lockfile pinned, kept because the gap explains the
+compatibility fixes in `fix/current-package-compat`:
 
-| Package | Locked version | Used by |
-| --- | --- | --- |
-| `targets` | 1.7.0 | pipeline |
-| `tarchetypes` | 0.9.0 | pipeline |
-| `arrow` | 16.1.0 | L2 parquet read/write |
-| `zoomerjoin` | 0.1.4 | LSH blocking (in-house pkg) |
-| `duckplyr` | 0.3.2 | LSH physician-side prep |
-| `grf` | 2.3.2 | `probability_forest` — the RF matcher |
-| `zipcodeR` | 0.3.5 | `zip_distance` feature |
-| `tidyverse` | 2.0.0 | throughout |
-| `lubridate` | 1.9.3 | date parsing |
-| `furrr` | 0.3.1 | parallel L2 conversion |
-| `digest` | 0.6.35 | declared in `tar_option_set` |
-| `readxl` | 1.4.2 | `label.R` |
-| `glue` | 1.6.2 | `label.R` |
-| `yesno` | 0.1.2 | `label.R` interactive prompts |
-| `vcd` | 1.4-12 | `label.R` inter-coder kappa |
+| Package | Validated | Old lock | Used by |
+| --- | --- | --- | --- |
+| `targets` | 1.12.0 | 1.7.0 | pipeline |
+| `tarchetypes` | 0.14.1 | 0.9.0 | pipeline |
+| `arrow` | 25.0.0 | 16.1.0 | L2 parquet read/write |
+| `zoomerjoin` | 0.2.3 | 0.1.4 | LSH blocking (in-house pkg) |
+| `duckplyr` | 1.2.1 | 0.3.2 | LSH physician-side prep |
+| `grf` | 2.6.1 | 2.3.2 | `probability_forest` — the RF matcher |
+| `zipcodeR` | 0.3.5 | 0.3.5 | `zip_distance` feature |
+| `tidyverse` | 2.0.0 | 2.0.0 | throughout |
+| `lubridate` | 1.9.5 | 1.9.3 | date parsing |
+| `furrr` | 0.4.0 | 0.3.1 | parallel L2 conversion |
+| `digest` | 0.6.39 | 0.6.35 | declared in `tar_option_set` |
+| `readxl` | 1.5.0 | 1.4.2 | `label.R` |
+| `glue` | 1.8.1 | 1.6.2 | `label.R` |
+| `yesno` | 0.1.3 | 0.1.2 | `label.R` interactive prompts |
+| `vcd` | 1.4-14 | 1.4-12 | `label.R` inter-coder kappa |
 
-The lockfile also pinned **R 4.3.3** and 151 packages in total (the rest
-transitive). Full detail is recoverable from git history if ever needed.
+Also needed: **`terra`** (1.9-34), a `zipcodeR` dependency that does not reliably
+install transitively — `library(zipcodeR)` fails with "there is no package called
+'terra'" if it is missing. Install it explicitly.
 
-**Known gap:** `duckplyr` is called at `code/04_locality_sensitive_hash.R:52`
-but is *not* listed in `tar_option_set(packages = ...)`. It works today only
-because the call is namespaced. Anything that reorganises that target should
-either declare it or keep the namespaced form.
+The old lockfile pinned **R 4.3.3** and 151 packages in total (the rest
+transitive); full detail is recoverable from git history. Under the tidyverse
+versions above, `dplyr` is 1.2.1, `purrr` 1.2.2, `readr` 2.1.6, `ggplot2` 4.0.1.
+
+### ⚠ zoomerjoin `block_by` — do not "restore" the named form
+`block_by` must be a **single column name present in both tables**
+(`block_by = "st"`). The `c("phys_col" = "voter_col")` renaming form — which the
+original code used — **errors on CRAN zoomerjoin** with `Can't rename variables in
+this context`, because the named form reaches `unite()` internally.
+
+Upstream [issue #135](https://github.com/beniaminogreen/zoomerjoin/issues/135):
+the maintainer confirmed the bug and fixed it on `main` in April 2026, but stated
+there is **no planned CRAN release**. CRAN 0.2.3 was published 2026-03-14, before
+the fix, so the named form stays broken on CRAN indefinitely. We deliberately do
+*not* use the GitHub build — it would require a Rust toolchain wherever the
+pipeline runs.
+
+Consequences for `R/locality_sensitive_hash.R`:
+- The voter-side blocking columns are named `st` / `st_mi` to match the physician
+  side, **not** `st_2` / `st_mi_2`. The join therefore suffixes them, which is why
+  `state_agree` compares `st.x` to `st.y`.
+- **`by` is not optional.** Omitting it errors with `'by_a' must be of length 1`.
+
+### Other findings from the compatibility pass
+- `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
+  whereas `jaccard_inner_join()`'s is `n_gram_width`. The code passes `3`
+  positionally for `full_name_sim` but omits it for `mid_name_agree`, so that
+  feature was computed on 2-grams while every other name comparison uses 3.
+  **Confirmed intentional** (middle names are short enough that 3-grams are too
+  coarse) and now passed explicitly at the call site, so it reads as a decision
+  rather than an inherited default. Do not "correct" it to 3.
+- `make_X_matrix()` selects 6 columns but emits **7**: `model.matrix.lm(~ -1 + .)`
+  expands the logical `mid_initial_agree` into both `...FALSE` and `...TRUE`
+  dummies. Harmless for `grf`, but it is a latent failure — if a training set
+  happens to contain only one level, the training and prediction matrices get
+  different column counts and `predict()` fails on a dimension mismatch.
+
+**Known gap (fixed):** `duckplyr` was missing from
+`tar_option_set(packages = ...)` and worked only because the call site is
+namespaced; now declared.
 
 ## R style conventions
 - Use tidyverse packages where possible.
