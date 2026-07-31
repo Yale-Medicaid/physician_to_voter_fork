@@ -376,6 +376,32 @@ Also note the distance files only cover **2019–2024**, while the project spans
 2018–2025. ZCTA geography moves little year to year, so a single file is used for
 all years rather than matching year-by-year; revisit if that assumption matters.
 
+#### Radius choice — settled, do not relitigate
+The **100-mile** file is a deliberate choice. Two alternatives were evaluated and
+rejected:
+
+- **500-mile file** — pushes truncation out but keeps the same conflated-`NA`
+  problem, at roughly 20× the size. Row counts scale as about `r^1.82` (fitted
+  from the 5-mile and 25-mile files; sublinear in area because ZCTA density falls
+  off), so 100 miles is ~24M rows / ~0.5 GB and 500 miles is ~455M rows / ~10 GB.
+- **Computing Haversine ourselves from the centroid file**
+  (`https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv`,
+  890 KB, 33,791 rows, columns `zcta5, intptlat, intptlong`). This reproduces
+  NBER's published distances to a **max absolute error of 0.000035 miles** across
+  20,000 sampled real pairs, using Earth radius `6371 / 1.609344 = 3958.756` miles.
+  It would remove truncation entirely, make `NA` mean only "not a valid ZCTA", and
+  delete both the self-pair fill and the Arrow join.
+
+The centroid route is on the table if the truncation ever becomes a problem — the
+validated radius constant above is the only non-obvious part. It was not taken
+because the lookup stays faithful to the published NBER numbers rather than
+reimplementing their calculation.
+
+**Consequence to keep in mind when reading variable importance:** because LSH
+blocks on state, `zip_dist` missingness is *state-correlated* — geographically
+large states have many same-state pairs beyond 100 miles and so far more `NA`
+than small states. That is a property of the feature, not a data problem.
+
 ### Other findings from the compatibility pass
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
   whereas `jaccard_inner_join()`'s is `n_gram_width`. The code passes `3`
