@@ -26,12 +26,12 @@ list(
 	tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv", format = "file"),
 	tar_target(raw_voter_files,list.files("trunk/raw/rawl2/", pattern = "*.tab", full.names=T, recursive = T),format = "file"),
 
-	# NBER ZIP Code Distance Database, 100-mile radius, ZCTA-based.
-	# https://data.nber.org/distance/zip/2024/100miles/gaz2024zcta5distance100miles.csv
-	# Columns: zip1, zip2, miles_to_zcta5. Pairs beyond 100 miles are absent, and
-	# same-ZIP pairs are absent too -- see locality_sensitive_hash() for how both
-	# are handled.
-	tar_target(zip_distance_file, "trunk/raw/gaz2024zcta5distance100miles.csv", format = "file"),
+	# NBER ZCTA centroid file (Census internal points), 890 KB.
+	# https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
+	# Columns: zcta5, intptlat, intptlong. locality_sensitive_hash() computes
+	# great-circle distances from these directly, which is what NBER's own distance
+	# files contain -- see that function for why we compute rather than look up.
+	tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv", format = "file"),
 
 	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "parquet"),
 
@@ -42,7 +42,7 @@ list(
 
 	# Run LSH To create 'rough' / blocked dataset
 	tar_target(
-		lshed_data, locality_sensitive_hash(physician_data, voter_files, zip_distance_file),
+		lshed_data, locality_sensitive_hash(physician_data, voter_files, zip_centroid_file),
 		format = "parquet"
 	),
 
