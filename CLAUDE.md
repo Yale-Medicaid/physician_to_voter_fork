@@ -109,33 +109,32 @@ individually diffed (not sampled/assumed):
 
 **Known unstable / do not hardcode a single name — needs year-aware handling
 if used:**
-- **Occupation fields — schema mapping CONFIRMED. Code usage CONFIRMED (the
-  user has verified the current codebase does use an occupation field from
-  L2); exactly how/where is not yet confirmed and should surface in the
-  read-only pass.** Schema verified across every year 2018–2025 individually
-  (2018, 2019, 2020, 2021, 2022, 2023, 2024 all confirmed identical to each
-  other; 2025 confirmed different). The change is a single clean cutover
-  between 2024 and 2025, not a gradual drift:
+- **Occupation fields — fully resolved; nothing left to investigate.** Schema
+  verified across every year 2018–2025 individually (2018–2024 all confirmed
+  identical to each other; 2025 confirmed different). The change is a single clean
+  cutover between 2024 and 2025, not a gradual drift:
   - **2018–2024** (7 years, all confirmed identical): `CommercialData_Occupation`,
     `CommercialData_OccupationGroup`, `CommercialData_OccupationIndustry`
   - **2025**: `ConsumerData_Occupation_of_Person`, `ConsumerData_Occupation_Group`
     only. **`OccupationIndustry` has no 2025+ successor — it is dropped
     entirely, not renamed.**
-  - Year-aware handling is therefore a simple `year <= 2024` vs. `year >= 2025`
-    branch, not a multi-point mapping.
-  - **Open decision, not yet made:** what to do about `OccupationIndustry`
-    disappearing in 2025+ (e.g., drop the feature entirely going forward vs.
-    treat as structurally missing for those years). This is a modeling
-    decision for the user, not something to resolve automatically.
-  - **During the read-only pass, identify exactly which occupation field(s)
-    the code uses (`Occupation`, `OccupationGroup`, `OccupationIndustry`, or
-    some combination), where (flow-diagram match, RF features, or both), and
-    report this back specifically** — don't fold it into a general field
-    list, call it out on its own, since it determines whether/how the
-    year-aware mapping above needs to be implemented and whether the
-    `OccupationIndustry` open decision is actually consequential.
-  - Do not implement the year-aware column-mapping code until the read-only
-    pass has confirmed exactly which fields and pipeline stage(s) are involved.
+  - **The value set is unchanged across the cutover** (user-confirmed). The 2025
+    values match 2018–2024, so `"Medical-Physician"`, `"Unknown"` and the rest stay
+    valid literals. The year-aware work is therefore a **pure column rename** — no
+    value mapping, no codebook translation, and the `grepl("Medical", ...)` and
+    `== "Unknown"` tests in `make_X_matrix()` and `locality_sensitive_hash()` hold
+    for every year.
+  - **Code usage:** `CommercialData_Occupation` is the only occupation field used in
+    logic. It feeds the RF via `occ_medical` / `occ_unknown`, and the
+    `medical` / `na_medical` / `medical_sub` columns in
+    `locality_sensitive_hash()`. `OccupationGroup` and `OccupationIndustry` are
+    read into the parquet but never referenced anywhere.
+  - **`OccupationIndustry` disappearing in 2025+ is therefore moot** — nothing
+    consumes it. It becomes a decision only if someone adds it as a feature.
+  - **Still to implement:** the rename itself. Deferred alongside the L2 parquet
+    source refactor, since that changes where L2 columns are selected and doing it
+    now would mean writing it twice. Note the code has no year dimension at all
+    today, so there is currently nowhere to branch on year.
 - Broader pattern: most `CommercialData_*` (2018) fields were renamed to
   `ConsumerData_*` (2025) — this is a wide, systemic rename. Only occupation
   has been checked in detail; other `CommercialData_*`/`ConsumerData_*` fields
@@ -441,9 +440,8 @@ Computed from the raw field rather than reusing the `medical` / `na_medical` col
 **This makes the year-aware column mapping consequential**, where before it was moot.
 Occupation is now load-bearing for the RF, so the 2024→2025 rename
 (`CommercialData_Occupation` → `ConsumerData_Occupation_of_Person`) must be handled
-before any 2025 run. The *values* matter too, not just the column name:
-`grepl("Medical", ...)` and `== "Unknown"` are 2018-codebook string tests, and the 2025
-value vocabulary is unconfirmed.
+before any 2025 run. It is a **rename only** — the value set is confirmed unchanged
+across the cutover, so `grepl("Medical", ...)` and `== "Unknown"` stay correct.
 
 Finer options not taken, worth revisiting once variable importance is available: an exact
 `== "Medical-Physician"` indicator, and the `medical_sub` column
