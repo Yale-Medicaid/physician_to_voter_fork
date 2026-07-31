@@ -415,6 +415,40 @@ it is still wrong, and it silently shrinks the second join's contribution.
 it changes the candidate set, so it needs a deliberate decision rather than a
 drive-by fix.
 
+### Occupation is now an RF feature — as two indicators, not one
+`make_X_matrix()` derives **`occ_medical`** (`grepl("Medical", ..., ignore.case = TRUE)`)
+and **`occ_unknown`** (`is.na(...) | ... == "Unknown"`) from `CommercialData_Occupation`,
+bringing the RF to **8 features**. Previously occupation reached the model not at all:
+`med_prof` was computed and then dropped by the following `select()`.
+
+Two indicators rather than one is deliberate. `grepl()` returns `FALSE` for `NA`, so a
+single medical flag folds missing and `"Unknown"` occupations in with genuinely
+non-medical ones — a voter whose occupation is merely unrecorded would score as evidence
+*against* a match, identically to one recorded as `"Educator"`. L2's commercial
+occupation data is sparse, so that case is common rather than marginal. The pair encodes
+three distinguishable states:
+
+| Occupation value | `occ_medical` | `occ_unknown` | Reads as |
+| --- | --- | --- | --- |
+| `Medical-Physician`, `Medical-Nurse`, … | 1 | 0 | evidence for |
+| `Educator`, any other known value | 0 | 0 | evidence against |
+| `Unknown` or `NA` | 0 | 1 | uninformative |
+
+Computed from the raw field rather than reusing the `medical` / `na_medical` columns that
+`locality_sensitive_hash()` also derives, so the function depends only on
+`CommercialData_Occupation` being present.
+
+**This makes the year-aware column mapping consequential**, where before it was moot.
+Occupation is now load-bearing for the RF, so the 2024→2025 rename
+(`CommercialData_Occupation` → `ConsumerData_Occupation_of_Person`) must be handled
+before any 2025 run. The *values* matter too, not just the column name:
+`grepl("Medical", ...)` and `== "Unknown"` are 2018-codebook string tests, and the 2025
+value vocabulary is unconfirmed.
+
+Finer options not taken, worth revisiting once variable importance is available: an exact
+`== "Medical-Physician"` indicator, and the `medical_sub` column
+`locality_sensitive_hash()` already computes, which retains *which* medical occupation.
+
 ### Other findings from the compatibility pass
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
   whereas `jaccard_inner_join()`'s is `n_gram_width`. The code passes `3`
@@ -466,7 +500,8 @@ covered, not as work to repeat.** Its findings are folded into "Repo map",
 "Dependencies", and the occupation notes above. Key outcomes: NPPES is a
 manually-placed CMS dissemination file (not NBER); the RF training data is
 `data/labelled_training_data/` (two rule-labelled files plus two hand-labelled);
-`CommercialData_Occupation` is the only occupation field used in logic, and
+`CommercialData_Occupation` is the only occupation field used in logic (now an RF
+feature via `occ_medical`/`occ_unknown`, see `feature/rf-occupation-feature`), and
 `OccupationGroup`/`OccupationIndustry` are read but never referenced; the code
 is 2018-only with no year dimension at all.
 
