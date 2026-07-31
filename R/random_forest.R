@@ -48,13 +48,22 @@ make_X_matrix <- function(df) {
 #' match based on labelled training data. Use this Random Forest to predict
 #' whether pairs of records given by LSH are matches.
 #'
-#' @param lshed_data dataframe of potential matches created by LSH functions
+#' @param lshed_data path to the parquet dataset of potential matches written by
+#'   `locality_sensitive_hash()`
 #' @param labelled_training_files paths to the labelled training data
+#' @param out_pth directory to write the scored dataset to
 #'
-#' @return The input dataframe, with an extra column given the probability that
-#' each pair of records matches, as predicted by the random forest
+#' @return `out_pth` -- the input pairs with an extra `match` column giving the
+#'   probability that each pair matches, as predicted by the random forest
 #'
-add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data){
+add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data,
+																					 out_pth = "trunk/derived/rf_match_data"){
+	if (rlang::is_empty(lshed_data)) {
+		return(NULL)
+	}
+
+	unlink(out_pth, recursive = TRUE)
+
 	labelled_training_data <- labelled_training_files %>%
 		map(read_parquet) %>%
 		list_rbind()
@@ -64,11 +73,17 @@ add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data){
 
 	model <- probability_forest(training_X, training_Y)
 
+	# grf needs a materialised matrix, so the candidate pairs come into memory here
+	# regardless; the path-passing is about what crosses the target boundary.
+	pairs <- arrow::open_dataset(lshed_data) %>%
+		collect()
 
-	X <- make_X_matrix(lshed_data)
-	lshed_data$match <- predict(model, newdata=X)$predictions[,2]
+	X <- make_X_matrix(pairs)
+	pairs$match <- predict(model, newdata=X)$predictions[,2]
 
-	return(lshed_data)
+	write_dataset(pairs, out_pth)
+
+	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
 
 

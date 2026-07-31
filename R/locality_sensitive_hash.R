@@ -1,15 +1,25 @@
 #' Create a datframe of possible match pairs using locality sensitive hashing
 #' 
-#' @param physican_data dataframe of cleaned physican data, as returned by `clean_physician_data`
+#' @param physician_data path to the cleaned physician dataset written by
+#'   `clean_physician_data()`
 #' @param voter_files a vector of cleaned voter files, as returned by `process_voter data`
 #' @param zip_centroid_file path to the NBER ZCTA centroid csv (see
 #'   `zip_centroid_file` in `_targets.R`)
+#' @param out_pth directory to write the candidate pairs to
 #'
-#' @return a dataframe of 'rough matches' or possible matches. This should have
-#' very high recall as it's basically a blocking step; we should return all
-#' possible matching records, and expect a very high false-positive rate
+#' @return `out_pth` -- a parquet dataset of 'rough matches' or possible matches, one row
+#' per (npi, LALVOTERID) pair. This should have very high recall as it's basically a
+#' blocking step; we should return all possible matching records, and expect a very high
+#' false-positive rate
 #'
-locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_file) {
+locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_file,
+																		out_pth = "trunk/derived/lshed_data") {
+	if (rlang::is_empty(physician_data) || rlang::is_empty(voter_files)) {
+		return(NULL)
+	}
+
+	unlink(out_pth, recursive = TRUE)
+
 	yale_schema <- c(
 		CommercialData_Occupation = "c",
 		CommercialData_OccupationGroup = "c",
@@ -53,7 +63,7 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 	# Standardize Physician Data
 	# `coalesce()` rather than `replace_na()` throughout: arrow has no binding for
 	# replace_na and silently pulls the whole table into R when it meets one.
-	phys_data <- arrow::as_arrow_table(physician_data) %>%
+	phys_data <- arrow::open_dataset(physician_data) %>%
 		mutate(
 			# coalesce the middle name, matching the voter side below. Unguarded,
 			# paste0 renders a missing middle name as the literal string "NA" and
@@ -215,6 +225,14 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 			zip_dist = zip_dist_vec
 		)
 
-		bind_cols(comparison_dataset, processed)
+		# ungroup(): `processed` is still grouped by npi from the n = n() step above, and a
+		# grouped frame is a poor thing to hand to arrow or to a downstream consumer.
+		bind_cols(comparison_dataset, processed) %>%
+			ungroup() %>%
+			write_dataset(out_pth)
+
+	# One row per candidate pair. This holds only because physician_data is distinct in
+	# npi -- a duplicated physician row would duplicate every pair it generates.
+	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
 
