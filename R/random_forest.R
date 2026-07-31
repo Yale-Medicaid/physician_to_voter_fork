@@ -9,7 +9,24 @@
 #'
 make_X_matrix <- function(df) {
 	df %>%
-		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n) %>%
+		mutate(
+			# Occupation enters as TWO indicators, not one. A lone
+			# grepl("Medical", ...) flag would fold missing and "Unknown" occupations
+			# in with genuinely non-medical ones, because grepl() returns FALSE for
+			# NA -- so a voter whose occupation is simply unrecorded would score as
+			# evidence against a match, identically to one recorded as "Educator".
+			# That distinction matters here because L2's commercial occupation data
+			# is sparse, so "unknown" is a common and quite different state from
+			# "known, and not medical".
+			#
+			# Computed from CommercialData_Occupation directly rather than reusing
+			# the `medical` / `na_medical` columns that locality_sensitive_hash()
+			# also derives, so this only depends on the raw field being present.
+			occ_medical = grepl("Medical", CommercialData_Occupation, ignore.case = TRUE),
+			occ_unknown = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown"
+		) %>%
+		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n,
+					 occ_medical, occ_unknown) %>%
 		# Coerce logicals to 0/1 rather than letting model.matrix expand them. Under
 		# `~ -1 + .` a logical yields both a ...FALSE and a ...TRUE dummy, so
 		# selecting 6 columns emitted a 7-column matrix with a perfectly

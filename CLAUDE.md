@@ -427,7 +427,8 @@ covered, not as work to repeat.** Its findings are folded into "Repo map",
 "Dependencies", and the occupation notes above. Key outcomes: NPPES is a
 manually-placed CMS dissemination file (not NBER); the RF training data is
 `data/labelled_training_data/` (two rule-labelled files plus two hand-labelled);
-`CommercialData_Occupation` is the only occupation field used in logic, and
+`CommercialData_Occupation` is the only occupation field used in logic (now an RF
+feature via `occ_medical`/`occ_unknown`, see `feature/rf-occupation-feature`), and
 `OccupationGroup`/`OccupationIndustry` are read but never referenced; the code
 is 2018-only with no year dimension at all.
 
