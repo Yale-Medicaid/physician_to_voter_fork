@@ -394,6 +394,27 @@ Centroid files exist for **2019–2024** while the project spans 2018–2025. ZC
 internal points move little year to year, so a single file is used for all years;
 revisit if that assumption ever matters.
 
+### Open issue — the second LSH join's middle-name filter drops NAs
+`locality_sensitive_hash()`'s second join is post-filtered with:
+
+```r
+filter(nchar(Voters_MiddleName) <= 1 | nchar(mid_nm) <= 1)
+```
+
+`nchar(NA)` is `NA`, not `0` or `2`, and `mid_nm` / `Voters_MiddleName` are still
+raw at that point (the `coalesce` to `""` happens later, in `processed`). So when
+a middle name is missing the test is `NA <= 1` → `NA`, and `filter()` drops `NA`
+rows. A pair where **both** sides lack a middle name evaluates to `NA | NA` → `NA`
+and is dropped from the second join entirely.
+
+That is the opposite of the filter's intent, which is to admit pairs where at
+least one side has only an initial or nothing. It is currently masked, because
+`fix/physician-name-na` makes such pairs match in the *first* join instead — but
+it is still wrong, and it silently shrinks the second join's contribution.
+`coalesce(..., "")` before the `nchar()` calls would fix it. Not done yet:
+it changes the candidate set, so it needs a deliberate decision rather than a
+drive-by fix.
+
 ### Other findings from the compatibility pass
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,
   whereas `jaccard_inner_join()`'s is `n_gram_width`. The code passes `3`
