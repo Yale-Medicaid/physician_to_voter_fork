@@ -69,3 +69,34 @@ get_l2_state <- function(leaf) {
 get_l2_year <- function(leaf) {
   as.numeric(stringr::str_extract(leaf, "(?<=year=)[0-9]{4}"))
 }
+
+#' Build the output subdirectory for one L2 partition
+#'
+#' @description Flips the partition order. L2 arrives as `state=XX/year=YYYY`; everything
+#' this project writes is `year=YYYY/state=XX`, matching the house convention. Doing the
+#' flip in one named place keeps it from being silently re-derived (or reversed) at each
+#' call site.
+#'
+#' @param leaf an L2 leaf path
+#'
+#' @return a `year=YYYY/state=XX` fragment
+build_l2_out_subdir <- function(leaf) {
+  glue::glue("year={get_l2_year(leaf)}/state={get_l2_state(leaf)}")
+}
+
+#' Name of the L2 occupation column for a given year
+#'
+#' @description L2 renamed its commercial fields to consumer ones between 2024 and 2025.
+#' Only occupation has been verified in detail, and the *values* are unchanged across the
+#' cutover, so this is a pure column rename with no value mapping.
+#'
+#' @param year four-digit year
+#'
+#' @return the occupation column name for that year
+l2_occupation_col <- function(year) {
+  if (year <= 2024) {
+    "CommercialData_Occupation"
+  } else {
+    "ConsumerData_Occupation_of_Person"
+  }
+}

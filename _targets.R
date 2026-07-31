@@ -6,7 +6,6 @@ library(tarchetypes)
 # extracts, and resolve_l2_extract() picks the latest at run time.
 l2_path <- "/home/pg589/project_pi_cdn7/pg589/l2/transformed/vm2/uniform.parquet/state={state}/year={year}"
 
-source("R/extract_l2.R")
 source("R/clean_physician_data.R")
 source("R/locality_sensitive_hash.R")
 source("R/random_forest.R")
@@ -47,8 +46,6 @@ list(
 	tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv", format = "file"),
 	tar_target(nppes_file, "trunk/raw/NPPES_Data_Dissemination_February_2023/npidata_pfile_20050523-20230212.csv", format = "file"),
 	tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv", format = "file"),
-	tar_target(raw_voter_files,list.files("trunk/raw/rawl2/", pattern = "*.tab", full.names=T, recursive = T),format = "file"),
-
 	# NBER ZCTA centroid file (Census internal points), 890 KB.
 	# https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
 	# Columns: zcta5, intptlat, intptlong. locality_sensitive_hash() computes
@@ -64,20 +61,26 @@ list(
 	targets::tar_target(cms_npi_conflicts,
 											count_cms_npi_conflicts(cms_file)),
 
-	tar_target(voter_files,
-						 process_voter_data(raw_voter_files),
-						 format = "file"
-						 ),
-
-	# Run LSH To create 'rough' / blocked dataset
-	tar_target(
-		lshed_data, locality_sensitive_hash(physician_data, voter_files, zip_centroid_file),
-		format = "file"
-	),
+	# Stage A -- candidate pairs, one branch per state-year. Branches whose l2_extracts
+	# entry is NULL return NULL and drop out of aggregation. Note map() still creates a
+	# branch for those, so the NULL guard inside the function is doing real work.
+	targets::tar_target(lsh_pairs,
+											locality_sensitive_hash(physician_data, l2_extracts, zip_centroid_file),
+											pattern = map(l2_extracts),
+											format = "file"),
 
 	tar_target(labelled_training_files, list.files("trunk/raw/labelled_training_data/", full.names=T), format = "file"),
 
-	tar_target(rf_match_data, add_rf_match_predictions_to_df(labelled_training_files, lshed_data), format = "file")
+	# Trained once on the 2018 labels and reused for every year. Small, so in-memory.
+	targets::tar_target(rf_model,
+											train_rf_model(labelled_training_files)),
+
+	# Stage C -- combine a year's states, compute n, then predict. Per year because grf
+	# needs a materialised matrix and eight years of national pairs will not fit.
+	targets::tar_target(scored_pairs,
+											score_pairs(lsh_pairs, rf_model, years),
+											pattern = map(years),
+											format = "file")
 
 
 

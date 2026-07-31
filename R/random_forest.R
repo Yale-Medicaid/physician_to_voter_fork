@@ -42,49 +42,79 @@ make_X_matrix <- function(df) {
 }
 
 
-#' Add Random Forest Matching Predictions to the LSH dataframe
+#' Train the match model
 #'
-#' @description Fit a Random Forest model to predict whether pairs of records
-#' match based on labelled training data. Use this Random Forest to predict
-#' whether pairs of records given by LSH are matches.
+#' @description Fit a probability forest on the hand- and rule-labelled pairs. Trained
+#' ONCE and reused for every year: the labelled data is 2018-only, so this assumes the
+#' feature distribution is stable across the panel. That assumption is untested and
+#' nothing here detects drift -- if match rates look odd in later years, check it first.
 #'
-#' @param lshed_data path to the parquet dataset of potential matches written by
-#'   `locality_sensitive_hash()`
 #' @param labelled_training_files paths to the labelled training data
-#' @param out_pth directory to write the scored dataset to
 #'
-#' @return `out_pth` -- the input pairs with an extra `match` column giving the
-#'   probability that each pair matches, as predicted by the random forest
-#'
-add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data,
-																					 out_pth = "trunk/derived/rf_match_data"){
-	if (rlang::is_empty(lshed_data)) {
-		return(NULL)
-	}
-
-	unlink(out_pth, recursive = TRUE)
-
+#' @return a `grf::probability_forest` fit. Small enough to stay an in-memory target.
+train_rf_model <- function(labelled_training_files) {
 	labelled_training_data <- labelled_training_files %>%
 		map(read_parquet) %>%
 		list_rbind()
 
-	training_X <- make_X_matrix(labelled_training_data)
-	training_Y <- as.factor(labelled_training_data$match)
+	probability_forest(make_X_matrix(labelled_training_data),
+										 as.factor(labelled_training_data$match))
+}
 
-	model <- probability_forest(training_X, training_Y)
 
-	# grf needs a materialised matrix, so the candidate pairs come into memory here
-	# regardless; the path-passing is about what crosses the target boundary.
-	pairs <- arrow::open_dataset(lshed_data) %>%
+#' Score one year of candidate pairs
+#'
+#' @description Combines every state's candidate pairs for a year, computes `n`, and
+#' predicts.
+#'
+#' `n` (candidates per NPI) is computed *here* rather than in
+#' `locality_sensitive_hash()`. Today the two are equivalent: physicians are filtered to
+#' their own practice state, so within a year an NPI appears in exactly one state branch.
+#' It matters from Stage B onwards, when the cross-border pass starts adding pairs for the
+#' same NPI out of *adjacent* states -- at which point a per-branch count would undercount
+#' and drift from the national definition the model was trained against. Computing it here
+#' is correct now and stays correct then.
+#'
+#' Scoring is per year rather than all at once because `grf` needs a materialised matrix,
+#' and every candidate pair for eight years at national scale will not fit in memory. One
+#' year is the scale the pipeline has historically handled.
+#'
+#' @param lsh_pairs paths to the per-state-year candidate pair datasets
+#' @param rf_model fitted model from `train_rf_model()`
+#' @param this_year the year this branch scores
+#' @param out_pth glue template for the output directory
+#'
+#' @return `out_pth` -- the year's pairs with a `match_prob` column. Named `match_prob`,
+#'   not `match`, so it cannot be confused with the training *label* column of that name.
+score_pairs <- function(lsh_pairs, rf_model, this_year,
+												out_pth = "trunk/derived/scored_pairs/year={this_year}") {
+	if (rlang::is_empty(lsh_pairs)) {
+		return(NULL)
+	}
+
+	out_pth <- glue::glue(out_pth)
+	unlink(out_pth, recursive = TRUE)
+
+	# Recover the partitioned root from the branch paths so the hive year/state columns
+	# come back; opening the leaf paths individually would lose them.
+	root <- unique(dirname(dirname(lsh_pairs)))
+
+	pairs <- open_dataset(root) %>%
+		filter(year == this_year) %>%
 		collect()
 
-	X <- make_X_matrix(pairs)
-	pairs$match <- predict(model, newdata=X)$predictions[,2]
+	if (nrow(pairs) == 0) {
+		return(NULL)
+	}
+
+	pairs <- pairs %>%
+		group_by(npi) %>%
+		mutate(n = n()) %>%
+		ungroup()
+
+	pairs$match_prob <- predict(rf_model, newdata = make_X_matrix(pairs))$predictions[,2]
 
 	write_dataset(pairs, out_pth)
 
 	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
-
-
-
