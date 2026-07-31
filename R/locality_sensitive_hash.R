@@ -55,7 +55,10 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_distance_fi
 	# replace_na and silently pulls the whole table into R when it meets one.
 	phys_data <- arrow::as_arrow_table(physician_data) %>%
 		mutate(
-			full_name = tolower(paste0(provider_first_name, provider_middle_name, `provider_last_name_(legal_name)`)),
+			# coalesce the middle name, matching the voter side below. Unguarded,
+			# paste0 renders a missing middle name as the literal string "NA" and
+			# splices it into the name being compared.
+			full_name = tolower(paste0(provider_first_name, coalesce(provider_middle_name, ""), `provider_last_name_(legal_name)`)),
 			full_name_no_mid = tolower(paste0(provider_first_name, `provider_last_name_(legal_name)`)),
 			st = tolower(coalesce(provider_business_mailing_address_state_name, "")),
 			st_mi = tolower(paste0(coalesce(substr(provider_middle_name,1,1),""),st)),
