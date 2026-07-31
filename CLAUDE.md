@@ -296,7 +296,52 @@ differs substantially from the placeholder's assumptions — see "does not exist
 (replaced by `trunk/`), `slurm/`, `tests/`. There is **no test suite of any kind**
 (no testthat, no `tar_test`), **no SLURM submission scripts**, and **no committed
 schema documentation** — the L2 schema exists only as inline `col_types` vectors
-duplicated in `R/extract_l2.R` and `R/locality_sensitive_hash.R`.
+duplicated in `R/locality_sensitive_hash.R` (`R/extract_l2.R` is gone).
+
+## Pipeline shape after Stages A and C
+```
+years ┐
+      ├─ cross ─> l2_extracts ──map──> lsh_pairs ─┐
+states┘          (408 branches,    (per state-year) │
+                  ~3 NULL)                          ├──map(years)──> scored_pairs
+physician_data ────────────────────────────────────┘                (per year)
+rf_model ──────────────────────────────────────────┘
+```
+
+- **`lsh_pairs`** — one branch per state-year, `pattern = map(l2_extracts)`. Writes
+  `trunk/derived/lsh_pairs/year=YYYY/state=XX`. Note the partition order is **flipped**
+  relative to L2's input layout; `build_l2_out_subdir()` is the single place that flip
+  happens.
+- **`rf_model`** — trained once on the 2018 labels, in-memory, reused for every year.
+- **`scored_pairs`** — one branch per year, `pattern = map(years)`. Recovers the
+  partitioned root with `unique(dirname(dirname(lsh_pairs)))` (the house idiom) so hive
+  `year`/`state` columns come back, filters to its year, computes `n`, predicts.
+
+**`map()` branches over ALL upstream branches, including `NULL` ones.** Verified: 408
+upstream branches give 408 downstream branches, and aggregation yields 405. So the early
+`return(NULL)` guard in every branched function is load-bearing, not defensive decoration.
+
+**Where `n` is computed, and why it looks redundant.** `score_pairs()` computes it, not
+`locality_sensitive_hash()`. Today the two are equivalent — physicians are filtered to
+their own practice state, so within a year an NPI appears in exactly one state branch. It
+starts to matter at Stage B, when the cross-border pass adds pairs for the same NPI from
+*adjacent* states and a per-branch count would undercount. Do not "simplify" it back into
+the LSH step.
+
+**The prediction column is `match_prob`, not `match`.** `match` is the training *label*
+column read from the labelled files; keeping the names distinct means a scored dataset can
+never be mistaken for a labelled one.
+
+**Blocking after partitioning.** The first join drops `block_by` entirely — the partition
+*is* the state-year. The second join keeps `block_by = "mi"` (middle initial alone),
+because it previously blocked on `st_mi` = state **and** initial: dropping `block_by`
+outright there would also drop the middle-initial *agreement* requirement and start
+matching first+last across all middle initials. The post-filter is not a substitute — it
+tests middle-name *length*, not agreement. `by` remains required either way.
+
+**`state_agree` is constant `TRUE` until Stage B exists**, since everything is same-state.
+It is computed but deliberately not yet an RF feature; add it as the 9th feature when the
+cross-border pass lands.
 
 ## Documentation
 Methodology documentation lives in the mkdocs `docs/` source files and is the

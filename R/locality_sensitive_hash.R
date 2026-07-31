@@ -2,21 +2,36 @@
 #' 
 #' @param physician_data path to the cleaned physician dataset written by
 #'   `clean_physician_data()`
-#' @param voter_files a vector of cleaned voter files, as returned by `process_voter data`
+#' @param l2_extract path to ONE resolved L2 leaf (`state=XX/year=YYYY/month=MM/day=DD`),
+#'   as returned by `resolve_l2_extract()`. `NULL` for a state-year with no data, in which
+#'   case this returns `NULL` too.
 #' @param zip_centroid_file path to the NBER ZCTA centroid csv (see
 #'   `zip_centroid_file` in `_targets.R`)
-#' @param out_pth directory to write the candidate pairs to
+#' @param out_pth glue template for the output directory
+#' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning. Arguments
+#'   rather than inline literals so they are visible and adjustable from `_targets.R`.
 #'
-#' @return `out_pth` -- a parquet dataset of 'rough matches' or possible matches, one row
-#' per (npi, LALVOTERID) pair. This should have very high recall as it's basically a
+#' @return `out_pth` -- a parquet dataset of 'rough matches' for this one state-year, one
+#' row per (npi, LALVOTERID) pair. This should have very high recall as it's basically a
 #' blocking step; we should return all possible matching records, and expect a very high
-#' false-positive rate
+#' false-positive rate.
 #'
-locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_file,
-																		out_pth = "trunk/derived/lshed_data") {
-	if (rlang::is_empty(physician_data) || rlang::is_empty(voter_files)) {
+#' Note `n` (candidates per NPI) is deliberately NOT computed here; `score_pairs()` does,
+#' after a year's states are combined. See its docs for why -- the two are equivalent today
+#' and diverge once the cross-border pass exists.
+#'
+locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_file,
+																		out_pth = "trunk/derived/lsh_pairs/{ys}",
+																		n_gram_width = 3, band_width = 7,
+																		n_bands = 400, threshold = 0.7) {
+	if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
 		return(NULL)
 	}
+
+	this_state <- get_l2_state(l2_extract)
+	this_year  <- get_l2_year(l2_extract)
+	ys         <- build_l2_out_subdir(l2_extract)
+	out_pth    <- glue::glue(out_pth)
 
 	unlink(out_pth, recursive = TRUE)
 
@@ -71,8 +86,11 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 			full_name = tolower(paste0(provider_first_name, coalesce(provider_middle_name, ""), `provider_last_name_(legal_name)`)),
 			full_name_no_mid = tolower(paste0(provider_first_name, `provider_last_name_(legal_name)`)),
 			st = tolower(coalesce(provider_business_mailing_address_state_name, "")),
-			st_mi = tolower(paste0(coalesce(substr(provider_middle_name,1,1),""),st)),
+			# middle initial alone. State is now the partition, so it is no longer part of
+			# the blocking key -- see the second join below.
+			mi = tolower(coalesce(substr(provider_middle_name, 1, 1), "")),
 			) %>%
+		filter(st == tolower(this_state)) %>%
 		rename(
 			zip = provider_business_mailing_address_postal_code,
 			frst_nm = provider_first_name,
@@ -86,17 +104,28 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 	# The derived columns are computed inside the arrow query, before collect(), so
 	# they are evaluated as the dataset streams rather than over the whole voter
 	# file held in memory.
-	voter_dataset <- open_dataset(voter_files)  %>%
+	# Exactly one extract leaf, never the state=/year= level -- opening higher would
+	# silently union several extract dates. resolve_l2_extract() has already picked the
+	# latest one.
+	#
+	# The occupation column is renamed between 2024 and 2025, so it is selected by its
+	# year-appropriate name and canonicalised to `CommercialData_Occupation` here. Without
+	# this the 2025 read would not error -- `contains("Occupation")` and `any_of()` would
+	# quietly return nothing and every occupation-derived column would come out empty.
+	occ_col <- l2_occupation_col(this_year)
+
+	voter_dataset <- open_dataset(l2_extract)  %>%
 		select(LALVOTERID, contains("Voters_"),
 					 Residence_Addresses_Zip,Residence_Addresses_State,
 					 Residence_Addresses_City, contains("Occupation"),
 					 any_of(names(combined_schema))
 					 ) %>%
+		rename(CommercialData_Occupation = any_of(occ_col)) %>%
 		mutate(
 			full_name = tolower(paste0(Voters_FirstName, coalesce(Voters_MiddleName, ""), Voters_LastName)),
 			full_name_no_mid_l2 = tolower(paste0(Voters_FirstName, Voters_LastName)),
 			st = coalesce(tolower(Residence_Addresses_State),""),
-			st_mi = tolower(paste0(coalesce(substr(Voters_MiddleName,1,1),""),coalesce(Residence_Addresses_State,""))),
+			mi = tolower(coalesce(substr(Voters_MiddleName, 1, 1), "")),
 			medical = grepl("Medical", CommercialData_Occupation, ignore.case = T),
 			na_medical = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown",
 			medical_sub = ifelse(grepl("Medical", CommercialData_Occupation, ignore.case = T),CommercialData_Occupation, "None")
@@ -107,23 +136,27 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 	print(Sys.time())
 	
 	
-	# Perform LSH on full name blocking on state
-	# NB: `block_by` takes a single column name present in both tables; the
-	# c("a" = "b") renaming form errors in zoomerjoin (see block_by note below),
-	# which is why the voter-side blocking columns are named to match the
-	# physician side rather than carrying a _2 suffix. `by` must be given
-	# explicitly -- it is not optional.
+	# Full name, no blocking. State blocking is gone because the partition *is* the
+	# state-year. `by` is still required though -- omitting it errors with
+	# "'by_a' must be of length 1" on CRAN zoomerjoin.
 	join_out_1 <- jaccard_inner_join(phys_data, voter_dataset,
-															 by = c("full_name" = "full_name"), block_by = "st",
-														 n_gram_width=3, band_width = 7, n_bands = 400, threshold=.7, clean=T, progress=T)
+															 by = c("full_name" = "full_name"),
+														 n_gram_width=n_gram_width, band_width = band_width,
+														 n_bands = n_bands, threshold=threshold, clean=T, progress=T)
 	
 	print("Finished First Join")
 	print(Sys.time())
 	
-	# Perform LSH on first + last name blocking on state and middle initial
+	# First + last name, blocked on middle initial. Blocking is still needed here even
+	# though state is handled by the partition: this join previously blocked on `st_mi`
+	# (state AND initial), so dropping block_by outright would also drop the
+	# middle-initial *agreement* requirement and start matching first+last across all
+	# middle initials. The post-filter below does not substitute for that -- it tests
+	# middle-name length, not agreement.
 	join_out_2 <- jaccard_inner_join(phys_data, voter_dataset,
-															 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = "st_mi",
-														 n_gram_width=3, band_width = 7, n_bands = 400, threshold=.7, clean=T, progress=T) %>%
+															 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = "mi",
+														 n_gram_width=n_gram_width, band_width = band_width,
+														 n_bands = n_bands, threshold=threshold, clean=T, progress=T) %>%
 		# coalesce before nchar(): nchar(NA) is NA, NA <= 1 is NA, and filter() drops
 		# NA rows -- so a pair with no middle name on *either* side evaluated to
 		# NA | NA and was dropped, which is the opposite of this filter's intent.
@@ -145,14 +178,13 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 	print("Finished Joining")
 	
 	# standardize joined data
+	# NB: no `n = n()` here -- score_pairs() computes it after combining a year's states.
 	processed <- join_out %>%
 		mutate(
 			Voters_MiddleName = replace_na(Voters_MiddleName, ""),
 			mid_nm = replace_na(mid_nm, ""), 
 			year_dist = grd_yr - year(Voters_BirthDate),
-		) %>%
-		group_by(npi) %>%
-		mutate(n = n()) 
+		)
 	
 	# ZIP-to-ZIP distance, computed from the NBER ZCTA centroid file rather than
 	# looked up in one of their pre-computed distance files.
@@ -225,10 +257,7 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 			zip_dist = zip_dist_vec
 		)
 
-		# ungroup(): `processed` is still grouped by npi from the n = n() step above, and a
-		# grouped frame is a poor thing to hand to arrow or to a downstream consumer.
 		bind_cols(comparison_dataset, processed) %>%
-			ungroup() %>%
 			write_dataset(out_pth)
 
 	# One row per candidate pair. This holds only because physician_data is distinct in
