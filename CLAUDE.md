@@ -348,33 +348,51 @@ Two Arrow gotchas worth knowing before editing `locality_sensitive_hash()`:
   Arrow honours sequential column references within a single `mutate()`, both
   verified, so neither is a reason to move it back.
 
-### ZIP distance — NBER database, not zipcodeR
-`zip_dist` comes from the **NBER ZIP Code Distance Database** (100-mile radius,
-ZCTA-based), a `trunk/raw/` input read via `arrow`, joined on `(zip1, zip2)`.
-Source: `https://data.nber.org/distance/zip/2024/100miles/gaz2024zcta5distance100miles.csv`
-— columns `zip1, zip2, miles_to_zcta5`; years 2019–2024 available; radius
-variants 5/25/50/100/500 miles plus a full file.
+### ZIP distance — NBER centroids, computed here, not zipcodeR
+`zip_dist` is computed in `locality_sensitive_hash()` from the **NBER ZCTA centroid
+file**, a 890 KB / 33,791-row `trunk/raw/` input:
+`https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv`
+— columns `zcta5, intptlat, intptlong`. Those are Census ZCTA "internal points"
+(NBER's `source/` directory holds the underlying `2024_Gaz_zcta_national.txt`
+Gazetteer file).
 
-Properties of the file that the code depends on, all verified empirically:
-- **Same-ZIP pairs are absent.** There are zero rows where `zip1 == zip2`, so
-  they are filled to `0` explicitly after the join. **Do not remove that
-  fill** — without it, a physician practising in the voter's own ZIP gets `NA`
-  for the strongest co-location signal in the model.
-- `(zip1, zip2)` is unique and the file is fully symmetric, so one join direction
-  suffices and the join cannot duplicate or reorder rows.
-- ZIPs must be read with an **explicit string schema**; inferred types strip the
-  leading zeros that many ZIPs carry.
+**We compute great-circle distance rather than downloading one of NBER's
+pre-computed distance files.** Their distance files are Haversine distances between
+exactly these internal points, so this reproduces their published numbers:
+validated to a **max absolute error of 0.000035 miles (2.2 inches)** across 50,000
+pairs sampled from their own 25-mile file. The radius constant that achieves that
+is `6371 / 1.609344 = 3958.756` miles (6371 km) — **that value is not arbitrary,
+do not "round" it**; 3958.8 or 3963.19 both degrade the agreement.
 
-**Feature semantics changed here, not just the plumbing.** `zipcodeR::zip_distance`
-returned an exact distance for any pair. `zip_dist` is now `NA` when the pair is
-farther apart than 100 miles *or* when either side is not a valid ZCTA (PO-box-only
-ZIPs have no ZCTA). `grf` handles the missingness natively, but the existing
-labelled training data was scored with the old exact-distance feature, so RF
-predictions are not directly comparable across the change.
+Why compute instead of look up:
+- **No truncation.** Every published distance file is capped (5/25/50/100/500
+  miles), so pairs beyond the cap are simply absent. On the synthetic fixture,
+  switching from the 100-mile file took `zip_dist` from 60% `NA` to 0% `NA`.
+- **`NA` now means one thing:** "not a valid ZCTA" (PO-box-only ZIPs have none).
+  It no longer conflates that with "farther apart than the cap".
+- **No same-ZIP special case.** The distance files omit `zip1 == zip2` rows and
+  needed them filled to 0; Haversine returns 0 naturally.
+- 890 KB instead of ~0.5 GB (100-mile) or ~10 GB (500-mile).
 
-Also note the distance files only cover **2019–2024**, while the project spans
-2018–2025. ZCTA geography moves little year to year, so a single file is used for
-all years rather than matching year-by-year; revisit if that assumption matters.
+Implementation notes:
+- ZCTAs must be read with an **explicit string schema**; inferred types strip the
+  leading zeros many ZIPs carry.
+- Lookup is by `match()` rather than a join, because the centroid table is tiny but
+  `processed` is not — a join would materialise four extra lat/long columns
+  alongside every candidate pair. An unmatched ZIP gives `NA`, which indexes to
+  `NA` and propagates to `NA` distance.
+- `pmin(1, a)` guards `asin()`, since floating point can nudge the Haversine term a
+  hair above 1.
+
+**Feature semantics vs. the original pipeline.** This largely *restores* what
+`zipcodeR::zip_distance` gave — an exact distance for any pair — so the existing
+labelled training data is broadly comparable again. The residual difference is
+coverage: `zip_dist` is `NA` for ZIPs with no ZCTA, where zipcodeR's own database
+may have had a coordinate. Comparable, not identical.
+
+Centroid files exist for **2019–2024** while the project spans 2018–2025. ZCTA
+internal points move little year to year, so a single file is used for all years;
+revisit if that assumption ever matters.
 
 ### Other findings from the compatibility pass
 - `jaccard_similarity()`'s n-gram argument is `ngram_width` and **defaults to 2**,

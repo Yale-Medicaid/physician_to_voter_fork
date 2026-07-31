@@ -21,15 +21,18 @@ the top of `_targets.R`, so check there if a target reports a missing file.
 | `NPPES_Data_Dissemination_February_2023/` | Public (CMS NPPES dissemination) |
 | `DAC_NationalDownloadableFile.csv` | Public (CMS Physician Compare) |
 | `nucc_taxonomy_230.csv` | Public (NUCC taxonomy crosswalk) |
-| `gaz2024zcta5distance100miles.csv` | Public ([NBER ZIP Code Distance Database](https://www.nber.org/research/data/zip-code-distance-database)) |
+| `gaz2024zcta5centroid.csv` | Public ([NBER ZIP Code Distance Database](https://www.nber.org/research/data/zip-code-distance-database)) |
 | `labelled_training_data/` | Hand- and rule-labelled RF training pairs |
 | `unlabelled_training_data/` | Labelling partitions, pre-annotation |
 
-The ZIP distance file is roughly 1 GB. Fetch it with:
+The ZCTA centroid file is 890 KB. Fetch it with:
 
 ```bash
-curl -O https://data.nber.org/distance/zip/2024/100miles/gaz2024zcta5distance100miles.csv
+curl -O https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
 ```
+
+ZIP-to-ZIP distances are computed from these centroids rather than downloaded, so
+none of NBER's large pre-computed distance files are needed.
 
 The two training-data directories sit under `raw/` rather than `derived/`
 because although they began as samples of the LSH output, the labels in them are
