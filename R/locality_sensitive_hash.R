@@ -7,12 +7,19 @@
 #'   `zip_centroid_file` in `_targets.R`)
 #' @param out_pth directory to write the candidate pairs to
 #'
-#' @return `out_pth` -- a parquet dataset of 'rough matches' or possible matches. This
-#' should have very high recall as it's basically a blocking step; we should return all
-#' possible matching records, and expect a very high false-positive rate
+#' @return `out_pth` -- a parquet dataset of 'rough matches' or possible matches, one row
+#' per (npi, LALVOTERID) pair. This should have very high recall as it's basically a
+#' blocking step; we should return all possible matching records, and expect a very high
+#' false-positive rate
 #'
 locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_file,
 																		out_pth = "trunk/derived/lshed_data") {
+	if (rlang::is_empty(physician_data) || rlang::is_empty(voter_files)) {
+		return(NULL)
+	}
+
+	unlink(out_pth, recursive = TRUE)
+
 	yale_schema <- c(
 		CommercialData_Occupation = "c",
 		CommercialData_OccupationGroup = "c",
@@ -222,6 +229,10 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 		# grouped frame is a poor thing to hand to arrow or to a downstream consumer.
 		bind_cols(comparison_dataset, processed) %>%
 			ungroup() %>%
-			write_and_return(out_pth)
+			write_dataset(out_pth)
+
+	# One row per candidate pair. This holds only because physician_data is distinct in
+	# npi -- a duplicated physician row would duplicate every pair it generates.
+	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
 

@@ -58,6 +58,12 @@ list(
 
 	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "file"),
 
+	# How much the "drop NPIs with conflicting CMS records" rule in
+	# clean_physician_data() actually costs, and which field disagrees. Small, so it
+	# stays in memory -- read it with targets::tar_read(cms_npi_conflicts).
+	targets::tar_target(cms_npi_conflicts,
+											count_cms_npi_conflicts(cms_file)),
+
 	tar_target(voter_files,
 						 process_voter_data(raw_voter_files),
 						 format = "file"

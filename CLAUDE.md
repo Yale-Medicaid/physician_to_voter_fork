@@ -508,11 +508,10 @@ f <- function(input, out_pth = "trunk/derived/name") {
 }
 ```
 
-`write_and_return()` (in `R/helpers.R`) clears any previous output, writes, and returns the
-path — or returns `NULL` unchanged if handed `NULL`, which is what lets an empty state-year
-branch stay empty without special-casing at every call site. `return_out_pth()` is the
-narrower "path if it exists, else NULL" helper. Both are ported from
-`treated-by-thy-neighbor`.
+`return_out_pth()` (in `R/helpers.R`) returns the path if it exists and `NULL` otherwise;
+`return_out_pth_check_distinct()` additionally asserts distinctness before handing it back.
+Both are ported from `treated-by-thy-neighbor`. Emptiness is handled by an **explicit early
+`return(NULL)` guard at the top of the function**, not by threading `NULL` through a writer.
 
 **Small artifacts stay in memory.** There is no point writing a two-column lookup to disk
 to hand back a path. Path-passing is for L2 reads, candidate pairs, scored matches and the
@@ -533,12 +532,27 @@ Consequences already absorbed:
 - `add_rf_match_predictions_to_df()` still `collect()`s internally, because `grf` needs a
   materialised matrix. Path-passing is about what crosses the target boundary, not about
   never materialising.
+- Distinctness is asserted where there is a real invariant: `physician_data` on `npi`,
+  and both `lshed_data` and `rf_match_data` on `(npi, LALVOTERID)`. The pair invariant
+  holds *only because* `physician_data` is distinct in `npi` — a duplicated physician row
+  would duplicate every candidate pair it generates.
 - Parquet round-trips the awkward `provider_last_name_(legal_name)` column name — verified,
   since that name would be a plausible thing to break on a write/read cycle.
 
-**`physician_data` is not distinct in `npi`.** `clean_physician_data()`'s `distinct()`
-applies to the `(npi, grd_yr, med_sch)` triple, so an NPI with conflicting CMS rows fans
-out. Do not add a `check_for_distinct_result(pth, "npi")` assertion expecting it to pass.
+### `physician_data` is distinct in `npi`, by dropping conflicts
+An NPI carrying more than one `(grd_yr, med_sch)` combination in CMS is **dropped
+entirely** — there is no principled way to choose between them, and keeping one would fan
+that physician out through every downstream join.
+
+The subtlety that makes this easy to get wrong: removing the conflicted rows from
+`cms_data` is *not* sufficient. The join to NPPES is a `left_join`, so the physician
+survives with `grd_yr`/`med_sch` as `NA` instead of being dropped. The `anti_join` has to
+happen on the NPPES side, before the CMS join. NPIs simply *absent* from CMS are still
+kept with `NA grd_yr`, which is unchanged behaviour.
+
+`count_cms_npi_conflicts()` reports how much this costs and which field disagrees — a
+provider listed with two graduation years is a different data-quality story from one listed
+with two medical schools. It is a small in-memory target: `tar_read(cms_npi_conflicts)`.
 
 ## R style conventions
 - Use tidyverse packages where possible.

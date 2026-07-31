@@ -62,6 +62,8 @@ add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data,
 		return(NULL)
 	}
 
+	unlink(out_pth, recursive = TRUE)
+
 	labelled_training_data <- labelled_training_files %>%
 		map(read_parquet) %>%
 		list_rbind()
@@ -79,7 +81,9 @@ add_rf_match_predictions_to_df <- function(labelled_training_files, lshed_data,
 	X <- make_X_matrix(pairs)
 	pairs$match <- predict(model, newdata=X)$predictions[,2]
 
-	write_and_return(pairs, out_pth)
+	write_dataset(pairs, out_pth)
+
+	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
 
 
