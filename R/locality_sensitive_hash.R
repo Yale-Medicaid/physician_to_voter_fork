@@ -114,7 +114,10 @@ locality_sensitive_hash <- function(physician_data, voter_files, zip_centroid_fi
 	join_out_2 <- jaccard_inner_join(phys_data, voter_dataset,
 															 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = "st_mi",
 														 n_gram_width=3, band_width = 7, n_bands = 400, threshold=.7, clean=T, progress=T) %>%
-		filter(nchar(Voters_MiddleName)<=1 | nchar(mid_nm) <= 1)
+		# coalesce before nchar(): nchar(NA) is NA, NA <= 1 is NA, and filter() drops
+		# NA rows -- so a pair with no middle name on *either* side evaluated to
+		# NA | NA and was dropped, which is the opposite of this filter's intent.
+		filter(nchar(coalesce(Voters_MiddleName, "")) <= 1 | nchar(coalesce(mid_nm, "")) <= 1)
 		
 	
 	print("Finished Second Join")

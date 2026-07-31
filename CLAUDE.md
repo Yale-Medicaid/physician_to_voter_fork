@@ -394,26 +394,23 @@ Centroid files exist for **2019–2024** while the project spans 2018–2025. ZC
 internal points move little year to year, so a single file is used for all years;
 revisit if that assumption ever matters.
 
-### Open issue — the second LSH join's middle-name filter drops NAs
-`locality_sensitive_hash()`'s second join is post-filtered with:
+### The second LSH join's middle-name filter (fixed)
+The second join is post-filtered to admit pairs where at least one side has only a middle
+initial or nothing. It originally read:
 
 ```r
 filter(nchar(Voters_MiddleName) <= 1 | nchar(mid_nm) <= 1)
 ```
 
-`nchar(NA)` is `NA`, not `0` or `2`, and `mid_nm` / `Voters_MiddleName` are still
-raw at that point (the `coalesce` to `""` happens later, in `processed`). So when
-a middle name is missing the test is `NA <= 1` → `NA`, and `filter()` drops `NA`
-rows. A pair where **both** sides lack a middle name evaluates to `NA | NA` → `NA`
-and is dropped from the second join entirely.
+`nchar(NA)` is `NA`, not `0` or `2`, and both columns are still raw at that point (the
+`coalesce` to `""` happens later, in `processed`). So a missing middle name gave
+`NA <= 1` → `NA`, and `filter()` drops `NA` rows — meaning a pair with **no middle name on
+either side** evaluated to `NA | NA` and was dropped entirely. The exact opposite of the
+filter's intent.
 
-That is the opposite of the filter's intent, which is to admit pairs where at
-least one side has only an initial or nothing. It is currently masked, because
-`fix/physician-name-na` makes such pairs match in the *first* join instead — but
-it is still wrong, and it silently shrinks the second join's contribution.
-`coalesce(..., "")` before the `nchar()` calls would fix it. Not done yet:
-it changes the candidate set, so it needs a deliberate decision rather than a
-drive-by fix.
+Fixed in `fix/lsh-middle-name-na-filter` by coalescing before `nchar()`. Verified across all
+seven middle-name combinations: the three NA-involving cases are recovered, nothing is newly
+excluded, and "both sides have a full middle name" remains correctly excluded.
 
 ### Occupation is now an RF feature — as two indicators, not one
 `make_X_matrix()` derives **`occ_medical`** (`grepl("Medical", ..., ignore.case = TRUE)`)
