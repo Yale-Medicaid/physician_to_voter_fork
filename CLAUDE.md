@@ -498,6 +498,48 @@ Finer options not taken, worth revisiting once variable importance is available:
 `tar_option_set(packages = ...)` and worked only because the call site is
 namespaced; now declared.
 
+## Targets pass paths, not data
+Every substantial pipeline function writes an arrow dataset and returns its path; the
+target is declared `format = "file"`. The shape is:
+
+```r
+f <- function(input, out_pth = "trunk/derived/name") {
+  arrow::open_dataset(input) |> ... |> write_and_return(out_pth)
+}
+```
+
+`write_and_return()` (in `R/helpers.R`) clears any previous output, writes, and returns the
+path — or returns `NULL` unchanged if handed `NULL`, which is what lets an empty state-year
+branch stay empty without special-casing at every call site. `return_out_pth()` is the
+narrower "path if it exists, else NULL" helper. Both are ported from
+`treated-by-thy-neighbor`.
+
+**Small artifacts stay in memory.** There is no point writing a two-column lookup to disk
+to hand back a path. Path-passing is for L2 reads, candidate pairs, scored matches and the
+cross-year panel; in-memory is for `years`, `states`, lookup tribbles, tuning constants and
+the fitted RF model (which carries an external pointer, making `format = "file"` awkward).
+
+Why it matters here: Phase 5 fans out to 408 state-year branches. Passing frames through
+target boundaries would mean every branch's candidate pairs are serialised into the targets
+store *and* held in memory during aggregation. Paths keep the store a set of directory
+pointers.
+
+Consequences already absorbed:
+- `clean_physician_data()`, `locality_sensitive_hash()` and
+  `add_rf_match_predictions_to_df()` all take and return paths. Their `out_pth` defaults
+  live under `trunk/derived/`.
+- `locality_sensitive_hash()` now `ungroup()`s before writing. It previously returned a
+  frame still grouped by `npi`.
+- `add_rf_match_predictions_to_df()` still `collect()`s internally, because `grf` needs a
+  materialised matrix. Path-passing is about what crosses the target boundary, not about
+  never materialising.
+- Parquet round-trips the awkward `provider_last_name_(legal_name)` column name — verified,
+  since that name would be a plausible thing to break on a write/read cycle.
+
+**`physician_data` is not distinct in `npi`.** `clean_physician_data()`'s `distinct()`
+applies to the `(npi, grd_yr, med_sch)` triple, so an NPI with conflicting CMS rows fans
+out. Do not add a `check_for_distinct_result(pth, "npi")` assertion expecting it to pass.
+
 ## R style conventions
 - Use tidyverse packages where possible.
 - Prefix non-base function calls with their package namespace

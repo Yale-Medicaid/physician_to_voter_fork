@@ -11,6 +11,7 @@ source("R/clean_physician_data.R")
 source("R/locality_sensitive_hash.R")
 source("R/random_forest.R")
 source("R/l2.R")
+source("R/helpers.R")
 #source("R/match_diagnostics.R")
 
 
@@ -55,7 +56,7 @@ list(
 	# files contain -- see that function for why we compute rather than look up.
 	tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv", format = "file"),
 
-	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "parquet"),
+	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "file"),
 
 	tar_target(voter_files,
 						 process_voter_data(raw_voter_files),
@@ -65,12 +66,12 @@ list(
 	# Run LSH To create 'rough' / blocked dataset
 	tar_target(
 		lshed_data, locality_sensitive_hash(physician_data, voter_files, zip_centroid_file),
-		format = "parquet"
+		format = "file"
 	),
 
 	tar_target(labelled_training_files, list.files("trunk/raw/labelled_training_data/", full.names=T), format = "file"),
 
-	tar_target(rf_match_data, add_rf_match_predictions_to_df(labelled_training_files, lshed_data))
+	tar_target(rf_match_data, add_rf_match_predictions_to_df(labelled_training_files, lshed_data), format = "file")
 
 
 

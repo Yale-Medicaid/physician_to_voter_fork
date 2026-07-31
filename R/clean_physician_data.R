@@ -4,9 +4,15 @@
 #' @param nppes_file contains physician data including first name, last name, zip code
 #' @param nucc_file path to NUCC crosswalk file which provides a crosswalk between taxonomy codes and human-readable descriptions
 #'
-#' @return a consolidated dataframe which has the information from all three sources by NPI
+#' @param out_pth directory to write the consolidated dataset to
 #'
-clean_physician_data <- function(cms_file, nppes_file, nucc_file) {
+#' @return `out_pth` -- the path to a parquet dataset holding the information from all
+#'   three sources by NPI. Note this is *not* guaranteed distinct in `npi`: an NPI with
+#'   conflicting CMS rows fans out, since `distinct()` below applies to the
+#'   (npi, grd_yr, med_sch) triple rather than to npi alone.
+#'
+clean_physician_data <- function(cms_file, nppes_file, nucc_file,
+																 out_pth = "trunk/derived/physician_data") {
 	cms_data <- read_csv(cms_file) %>%
 	  rename_with(tolower) %>%
 		select(npi, grd_yr, med_sch) %>%
@@ -38,5 +44,5 @@ clean_physician_data <- function(cms_file, nppes_file, nucc_file) {
 		) %>%
 		filter(physician)
 
-	full_data
+	write_and_return(full_data, out_pth)
 }
