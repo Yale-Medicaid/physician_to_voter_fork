@@ -1,6 +1,0 @@
-outs:
-- md5: c4f038582a3c4f90365124b089cbab6c.dir
-  size: 494799
-  nfiles: 3
-  hash: md5
-  path: unlabelled_training_data

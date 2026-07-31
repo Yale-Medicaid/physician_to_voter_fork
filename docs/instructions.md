@@ -12,36 +12,35 @@ git clone git@github.com:Yale-Medicaid/physician_to_voter.git
 cd physician_to_voter
 ```
 
-## Step 2: Initialize the Python virtual environment and install DVC
+## Step 2: Put the input data in place
 
-This step is needed to ensure that you have access to [Data Version
-Control](https://dvc.org/), which is used to load the raw voter files from a
-cache on the server.
+The pipeline reads four inputs from `data/`. None of them are distributed with
+this repository, and there is no automated download step yet, so they have to be
+placed by hand.
 
-!!! Tip inline end
+!!! Warning inline end
 
-    If you are on linux or MacOS, you should replace line 2 with `source venv/bin/activate`
+    The L2 voter file is licensed. It must stay inside its approved environment
+    (the HPC) and must never be copied into this repository or committed.
 
+| Input | Expected location | How to obtain |
+| --- | --- | --- |
+| L2 voter file | `data/rawl2/` | HPC only — licensed, not redistributable |
+| NPPES | `data/NPPES_Data_Dissemination_February_2023/` | Public ([CMS NPPES data dissemination](https://download.cms.gov/nppes/NPI_Files.html)) |
+| CMS Physician Compare | `data/DAC_NationalDownloadableFile.csv` | Public |
+| NUCC taxonomy crosswalk | `data/nucc_taxonomy_230.csv` | Public ([NUCC](https://www.nucc.org/)) |
 
-```
-python -m venv venv
-source venv/Scripts/activate
-pip install -r requirements.txt
-```
+The exact paths the pipeline expects are declared as targets at the top of
+`_targets.R`; check there if a target reports a missing file.
 
+!!! Note inline end
 
-## Step 3: Retrieve cached versions of the voter file using DVC
+    L2 ingestion is mid-migration. The current code expects the older layout of
+    unzipped `.tab` files under `data/rawl2/`, produced by
+    `code/00_unzip_l2.R`. It is being moved to read the newer partitioned
+    parquet extracts directly.
 
-This step is easy! Simply run:
-
-```
-dvc pull
-```
-
-This pulls copies of the voter files and physician files from a secure backup
-folder. This code will only work on the server.
-
-## Step 4: Run the pipeline
+## Step 3: Run the pipeline
 
 The R-dependencies are automatically managed by [renv](https://rstudio.github.io/renv/articles/renv.html), which will install any missing packages on startup. This means that you can start the code pipeline by simply running the following lines in an R session running inside the root directory.
 
