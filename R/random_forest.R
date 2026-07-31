@@ -8,11 +8,20 @@
 #' @return a numeric predictor matrix
 #'
 make_X_matrix <- function(df) {
-	df <- df %>%
-		mutate(med_prof = grepl("Medical", CommercialData_Occupation)) %>%
-		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n)
-
-	 model.matrix.lm(~-1 + ., df, na.action=na.pass)
+	df %>%
+		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n) %>%
+		# Coerce logicals to 0/1 rather than letting model.matrix expand them. Under
+		# `~ -1 + .` a logical yields both a ...FALSE and a ...TRUE dummy, so
+		# selecting 6 columns emitted a 7-column matrix with a perfectly
+		# complementary, redundant pair.
+		#
+		# This is cosmetic, not a fix: logicals have a fixed {FALSE, TRUE} domain, so
+		# the width was stable at 7 regardless of the data, and grf's default mtry is
+		# min(ceiling(sqrt(p) + 20), p), which equals p at this size -- so the extra
+		# column changed neither the column count across calls nor the feature
+		# sampling. 6 columns for 6 features is simply easier to reason about.
+		mutate(across(where(is.logical), as.integer)) %>%
+		as.matrix()
 }
 
 

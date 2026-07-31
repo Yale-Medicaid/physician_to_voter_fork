@@ -384,11 +384,17 @@ all years rather than matching year-by-year; revisit if that assumption matters.
   **Confirmed intentional** (middle names are short enough that 3-grams are too
   coarse) and now passed explicitly at the call site, so it reads as a decision
   rather than an inherited default. Do not "correct" it to 3.
-- `make_X_matrix()` selects 6 columns but emits **7**: `model.matrix.lm(~ -1 + .)`
+- `make_X_matrix()` selected 6 columns but emitted **7**: `model.matrix.lm(~ -1 + .)`
   expands the logical `mid_initial_agree` into both `...FALSE` and `...TRUE`
-  dummies. Harmless for `grf`, but it is a latent failure — if a training set
-  happens to contain only one level, the training and prediction matrices get
-  different column counts and `predict()` fails on a dimension mismatch.
+  dummies. **This was previously recorded here as a latent `predict()`
+  dimension-mismatch failure. That was wrong** — logicals have a fixed
+  `{FALSE, TRUE}` domain, so `model.matrix` emits both dummies regardless of which
+  values are present, and the width was stable at 7 even for all-`TRUE` or all-`NA`
+  input. Only *factors* vary in width with the data (and a single-level factor
+  errors outright rather than narrowing). `grf`'s default `mtry` is
+  `min(ceiling(sqrt(p) + 20), p)`, which equals `p` at this size, so the redundant
+  column did not affect feature sampling either. Simplified to 6 columns in
+  `refactor/simplify-x-matrix` purely for legibility.
 
 **Known gap (fixed):** `duckplyr` was missing from
 `tar_option_set(packages = ...)` and worked only because the call site is
