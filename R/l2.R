@@ -114,11 +114,13 @@ l2_occupation_col <- function(year) {
 #' @param physician_data path to the cleaned physician dataset
 #' @param lsh_pairs paths to the Stage A candidate pair datasets
 #' @param state,year the state-year being processed
-#' @param min_name_sim name-similarity a candidate must beat to count as a match
+#' @param min_name_sim name-similarity a candidate must beat to count as a match.
+#'   Defaults to 0.75, below the 0.7 LSH threshold that admitted the pair in the first
+#'   place, so only weak survivors are retried across the border.
 #'
 #' @return a data frame of physician rows still wanting a match, or `NULL` if none
 unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
-                                 min_name_sim = 0.85) {
+                                 min_name_sim = 0.75) {
   phys <- arrow::open_dataset(physician_data) |>
     dplyr::filter(tolower(provider_business_mailing_address_state_name) == tolower(state)) |>
     dplyr::collect()
@@ -132,7 +134,9 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
     tibble::tibble(npi = phys$npi[0], best_sim = numeric(0))
   } else {
     arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
-      dplyr::filter(year == .env$year, state == .env$state) |>
+      # {{ }} injects the argument's value, disambiguating it from the identically
+      # named hive partition columns
+      dplyr::filter(year == {{year}}, state == {{state}}) |>
       dplyr::group_by(npi) |>
       dplyr::summarize(best_sim = max(full_name_sim, na.rm = TRUE), .groups = "drop") |>
       dplyr::collect()

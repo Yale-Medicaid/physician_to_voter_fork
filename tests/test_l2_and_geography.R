@@ -123,30 +123,42 @@ ok("every abbreviation is a real state or DC",
 
 ## ------------------------------------------------ unmatched_physicians
 cat("\n== unmatched_physicians ==\n")
-write_csv(tibble(NPI = 1:3,
-                 `Provider First Name` = c("Aaardvarkina","Bloopberta","Squibbly"),
-                 `Provider Middle Name` = c("Q", NA, "Zebulon"),
-                 `Provider Last Name (Legal Name)` = c("Zzyzxton","Quibblesnort","Fakenheimer"),
+write_csv(tibble(NPI = 1:4,
+                 `Provider First Name` = c("Aaardvarkina","Bloopberta","Squibbly","Fakeworth"),
+                 `Provider Middle Name` = c("Q", NA, "Zebulon", "X"),
+                 `Provider Last Name (Legal Name)` = c("Zzyzxton","Quibblesnort","Fakenheimer","Notarealname"),
                  `Provider Business Mailing Address State Name` = "CT",
                  `Provider Business Mailing Address Postal Code` = "06510",
                  `Healthcare Provider Taxonomy Code_1` = "207R00000X",
                  `Entity Type Code` = 1L), "nppes.csv")
 write_csv(tibble(Code = "207R00000X", Grouping = "Allopathic & Osteopathic Physicians"), "nucc.csv")
-write_csv(tibble(NPI = 1:3, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms.csv")
+write_csv(tibble(NPI = 1:4, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms.csv")
 phys <- clean_physician_data("cms.csv", "nppes.csv", "nucc.csv", out_pth = "phys")
 
-# Stage A found a strong match for npi 1, a weak one for npi 2, nothing for npi 3
+# Stage A found a strong match for npi 1, a weak one for npi 2, nothing for npi 3.
+# npi 4's 0.80 straddles the old 0.85 default and the current 0.75 one, so it pins
+# which default is actually in force.
 dir.create("lsh/year=2018/state=CT", recursive = TRUE, showWarnings = FALSE)
-write_parquet(tibble(npi = c(1, 2), full_name_sim = c(0.99, 0.40)),
+write_parquet(tibble(npi = c(1, 2, 4), full_name_sim = c(0.99, 0.40, 0.80)),
               "lsh/year=2018/state=CT/part-0.parquet")
 
-u <- unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018, min_name_sim = 0.85)
+u <- unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018)
 ok("strong in-state match is NOT sent cross-border", !(1 %in% u$npi))
 ok("weak in-state match IS sent cross-border", 2 %in% u$npi)
 ok("physician with no candidate at all IS sent cross-border", 3 %in% u$npi)
-ok("returns 2 of 3 physicians", nrow(u) == 2)
+ok("returns 2 of 4 physicians", nrow(u) == 2)
+ok("default min_name_sim is 0.75, so 0.80 counts as matched",
+   !(4 %in% u$npi))
+ok("raising the cutoff to 0.85 does send the 0.80 case cross-border",
+   4 %in% unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018,
+                               min_name_sim = 0.85)$npi)
+# 2019 has no Stage A data, so nobody has an in-state match and all 4 go cross-border.
+# If the filter read the hive `year` column instead of the argument it would match 2018
+# and return 2, so this pins the {{ }} disambiguation.
+ok("the state/year filter uses the arguments, not the hive columns of the same name",
+   nrow(unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2019)) == 4)
 ok("NULL lsh_pairs sends everyone cross-border",
-   nrow(unmatched_physicians(phys, NULL, "CT", 2018)) == 3)
+   nrow(unmatched_physicians(phys, NULL, "CT", 2018)) == 4)
 ok("a state with no physicians returns NULL",
    is.null(unmatched_physicians(phys, "lsh/year=2018/state=CT", "NY", 2018)))
 
