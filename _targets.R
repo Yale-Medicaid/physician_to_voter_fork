@@ -11,6 +11,7 @@ source("R/locality_sensitive_hash.R")
 source("R/random_forest.R")
 source("R/l2.R")
 source("R/geographic.R")
+source("R/reconcile.R")
 source("R/helpers.R")
 #source("R/match_diagnostics.R")
 
@@ -91,6 +92,17 @@ list(
 	targets::tar_target(scored_pairs,
 											score_pairs(lsh_pairs, cross_border_pairs, rf_model, years),
 											pattern = map(years),
+											format = "file"),
+
+	# Stage D -- collapse to one row per physician-year, then to one best match per
+	# physician. No match_prob cutoff is applied at either step; thresholding is left to
+	# whoever consumes the output.
+	targets::tar_target(physician_year_panel_data,
+											physician_year_panel(scored_pairs),
+											format = "file"),
+
+	targets::tar_target(physician_matches,
+											reconcile_physician_matches(physician_year_panel_data),
 											format = "file")
 
 
