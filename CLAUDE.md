@@ -517,20 +517,29 @@ NPPES — easy to confuse. Consequence: `grd_yr`, and so `year_dist`, is `NA` fo
 physician who does not bill Medicare. Pre-existing, but it means that missingness tracks
 Medicare participation rather than data quality.
 
-**Taxonomy: two extracts, not one per year.** NBER's `core` has no taxonomy field, and
-their per-year `ptaxcode` coverage is too irregular to build a panel from — four naming
-schemes, nothing at all for 2018, vintages up to eleven months adrift from the matching
-`core` (2021's is January against a December core). So:
+**Taxonomy: four extracts unioned, newest-first.** `read_taxonomy_union()` reads them in
+descending vintage and keeps the first row per NPI, so the most recent designation wins and
+providers who drop out mid-panel are still recovered. It sorts by vintage internally rather
+than trusting the order it is handed.
 
-- **latest** (2025-12) covers everyone currently enumerated;
-- **earliest** (2019-07, genuinely the earliest available) is unioned in for NPIs absent
-  from the latest — providers deactivated during the panel, who would otherwise vanish from
-  its early years.
+**Only four of eight years are usable, and that is the source's doing, not a choice:**
 
-`seq == 1` selects the primary taxonomy, matching the `_1` suffix the dissemination file
-used, so the physician filter is unchanged in meaning. Filtering on `seq` also matters
-mechanically: `ptaxcode` has one row per taxonomy per NPI, so without it the join would
-duplicate providers.
+| Year | Status |
+| --- | --- |
+| 2018 | no taxonomy file published at all |
+| 2019 | usable — `npi, seq, ptaxcode` |
+| 2020 | HTTP **403** for every format, while `core` in the same directory serves fine |
+| 2021, 2022 | published **without an `npi` column** (`ptaxcode, ptaxgroup, pprimtax`) — unjoinable |
+| 2023 | usable — extra columns, same keys |
+| 2024, 2025 | usable |
+
+Residual gap: an NPI that both appeared and disappeared strictly between 2019-12 and
+2023-05 is in none of the four. Small, since NPIs are rarely deactivated — but real.
+
+`seq == 1` selects the primary taxonomy, matching the `_1` suffix the CMS dissemination
+file used, so the physician filter is unchanged in meaning. It is also load-bearing
+mechanically: `ptaxcode` holds one row per taxonomy per NPI, so without it the join would
+duplicate providers and the `distinct in npi` assertion would fire.
 
 **Address: practice location, falling back to mailing.** `plocstatename`/`ploczip` with
 `pmailstatename`/`pmailzip` as fallback, and `addr_source` recording which was used. The

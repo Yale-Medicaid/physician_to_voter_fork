@@ -23,8 +23,8 @@ ok <- function(label, cond) {
 
 # Build a physician dataset in the NBER `core` schema. Used by several sections below.
 make_phys <- function(npi, first, mid, last, state, zip, year = 2018, tag = "p") {
-  core <- paste0(tag, "_core.csv"); tax <- paste0(tag, "_tax.parquet")
-  tax_early <- paste0(tag, "_tax_early.parquet")
+  # named for the newest vintage so read_taxonomy_union() recognises it
+  core <- paste0(tag, "_core.csv"); tax <- "PTAXCODE_202512.parquet"
   cms  <- paste0(tag, "_cms.csv");  nuc <- paste0(tag, "_nucc.csv")
   readr::write_csv(tibble::tibble(npi = npi, entity = 1L, pfname = first, pmname = mid,
                                   plname = last, plocstatename = state, ploczip = zip,
@@ -33,9 +33,7 @@ make_phys <- function(npi, first, mid, last, state, zip, year = 2018, tag = "p")
   readr::write_csv(tibble::tibble(Code = "207R00000X",
                                   Grouping = "Allopathic & Osteopathic Physicians"), nuc)
   readr::write_csv(tibble::tibble(NPI = npi, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), cms)
-  arrow::write_parquet(tibble::tibble(npi = integer(0), seq = integer(0),
-                                      ptaxcode = character(0)), tax_early)
-  clean_physician_data(core, tax, tax_early, cms, nuc, year,
+  clean_physician_data(core, tax, cms, nuc, year,
                        out_pth = paste0(tag, "_out/year={year}"))
 }
 
@@ -336,16 +334,26 @@ bind_rows(
          pmailstatename = "CT", pmailzip = "06510")
 ) |> write_csv(core_both)
 
-# latest covers 31-32 only; 33 appears solely in the earliest extract (deactivated since)
-arrow::write_parquet(tibble(npi = c(31L, 32L, 34L), seq = 1L, ptaxcode = "207R00000X"),
-                     "tax_latest.parquet")
-arrow::write_parquet(tibble(npi = c(33L, 33L), seq = c(1L, 2L),
-                            ptaxcode = c("207R00000X", "999X")), "tax_earliest.parquet")
+# Four vintages, named as NBER names them so read_taxonomy_union() can order them.
+#   npi 31 -- in 2025 as a physician, and in 2019 as something else -> 2025 must win
+#   npi 32 -- 2025 only
+#   npi 33 -- 2019 only          (left before the panel ended)
+#   npi 34 -- 2023 only          (the mid-panel case two bookends would miss)
+arrow::write_parquet(tibble(npi = c(31L, 32L), seq = 1L, ptaxcode = "207R00000X"),
+                     "PTAXCODE_202512.parquet")
+arrow::write_parquet(tibble(npi = integer(0), seq = integer(0), ptaxcode = character(0)),
+                     "PTAXCODE_202412.parquet")
+write_csv(tibble(npi = 34L, seq = 1L, ptaxcode = "207R00000X"), "ptaxcode_20235.csv")
+arrow::write_parquet(tibble(npi = c(31L, 33L, 33L), seq = c(1L, 1L, 2L),
+                            ptaxcode = c("NOTADOCTOR", "207R00000X", "999X")),
+                     "PTAXCODE_201912.parquet")
+tax_all <- c("PTAXCODE_202512.parquet", "PTAXCODE_202412.parquet",
+             "ptaxcode_20235.csv", "PTAXCODE_201912.parquet")
 write_csv(tibble(Code = "207R00000X", Grouping = "Allopathic & Osteopathic Physicians"), "nucc2.csv")
 write_csv(tibble(NPI = 31:34, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms2.csv")
 
-pp <- clean_physician_data(core_both, "tax_latest.parquet", "tax_earliest.parquet",
-                           "cms2.csv", "nucc2.csv", 2018, out_pth = "phys_yr/year={year}")
+pp <- clean_physician_data(core_both, tax_all, "cms2.csv", "nucc2.csv", 2018,
+                           out_pth = "phys_yr/year={year}")
 pd <- open_dataset(unique(dirname(pp))) |> collect()
 ok("organisations (entity 2) are excluded", !(34 %in% pd$npi))
 ok("individuals are kept", all(31:33 %in% pd$npi))
@@ -362,9 +370,19 @@ ok("output is partitioned year=/state=",
 ok("distinct in npi", nrow(pd) == n_distinct(pd$npi))
 ok("leading zeros survive the read (06510, not 6510)",
    pd$zip[pd$npi == 31] == "06510" && pd$zip[pd$npi == 32] == "02901")
-ok("an NPI present only in the EARLIEST taxonomy extract is still kept", 33 %in% pd$npi)
+ok("an NPI present only in the OLDEST extract is still kept", 33 %in% pd$npi)
 ok("only seq == 1 is used, so a second taxonomy row does not duplicate the NPI",
    sum(pd$npi == 33) == 1)
+
+# precedence and mid-panel recovery, checked on the union directly
+tu <- read_taxonomy_union(tax_all)
+ok("most RECENT designation wins (2025 physician beats 2019 non-physician)",
+   tu$taxonomy_code[tu$npi == 31] == "207R00000X")
+ok("shuffling the input does not invert precedence",
+   identical(read_taxonomy_union(rev(tax_all))$taxonomy_code[
+               read_taxonomy_union(rev(tax_all))$npi == 31], "207R00000X"))
+ok("an NPI seen only in a MIDDLE year is recovered", 34 %in% tu$npi)
+ok("one row per NPI after the union", nrow(tu) == n_distinct(tu$npi))
 
 ## ------------------------------------------------------------- NPPES URLs
 ## Table logic only -- no network. The URLs themselves were verified by hand against NBER;

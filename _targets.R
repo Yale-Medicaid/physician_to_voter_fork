@@ -52,12 +52,11 @@ list(
 											pattern = map(years),
 											format = "file"),
 
-	# Taxonomy: two NBER extracts rather than one per year -- see nppes_taxonomy_url().
-	targets::tar_target(nppes_taxonomy_latest,
-											download_nppes_taxonomy("latest"),
-											format = "file"),
-	targets::tar_target(nppes_taxonomy_earliest,
-											download_nppes_taxonomy("earliest"),
+	# Taxonomy: the four NBER extracts that are actually joinable, newest first.
+	# One target rather than a branched one, so the ordering the union depends on is
+	# fixed by nppes_taxonomy_urls() and cannot be shuffled by branch aggregation.
+	targets::tar_target(nppes_taxonomy_files,
+											download_nppes_taxonomy(),
 											format = "file"),
 
 	# clean physician data
@@ -74,8 +73,7 @@ list(
 	# taxonomy from the fixed CMS snapshot. Partitioned year=/state= so each matching
 	# branch prunes to its own directory instead of scanning nationally.
 	targets::tar_target(physician_data,
-											clean_physician_data(nppes_core_files,
-																					 nppes_taxonomy_latest, nppes_taxonomy_earliest,
+											clean_physician_data(nppes_core_files, nppes_taxonomy_files,
 																					 cms_file, nucc_taxonomy_file, years),
 											pattern = map(years, nppes_core_files),
 											format = "file"),
