@@ -52,9 +52,16 @@ list(
 											pattern = map(years),
 											format = "file"),
 
+	# Taxonomy: two NBER extracts rather than one per year -- see nppes_taxonomy_url().
+	targets::tar_target(nppes_taxonomy_latest,
+											download_nppes_taxonomy("latest"),
+											format = "file"),
+	targets::tar_target(nppes_taxonomy_earliest,
+											download_nppes_taxonomy("earliest"),
+											format = "file"),
+
 	# clean physician data
 	tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv", format = "file"),
-	tar_target(nppes_file, "trunk/raw/NPPES_Data_Dissemination_February_2023/npidata_pfile_20050523-20230212.csv", format = "file"),
 	tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv", format = "file"),
 	# NBER ZCTA centroid file (Census internal points), 890 KB.
 	# https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
@@ -67,8 +74,9 @@ list(
 	# taxonomy from the fixed CMS snapshot. Partitioned year=/state= so each matching
 	# branch prunes to its own directory instead of scanning nationally.
 	targets::tar_target(physician_data,
-											clean_physician_data(nppes_core_files, nppes_file, cms_file,
-																					 nucc_taxonomy_file, years),
+											clean_physician_data(nppes_core_files,
+																					 nppes_taxonomy_latest, nppes_taxonomy_earliest,
+																					 cms_file, nucc_taxonomy_file, years),
 											pattern = map(years, nppes_core_files),
 											format = "file"),
 

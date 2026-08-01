@@ -23,17 +23,20 @@ ok <- function(label, cond) {
 
 # Build a physician dataset in the NBER `core` schema. Used by several sections below.
 make_phys <- function(npi, first, mid, last, state, zip, year = 2018, tag = "p") {
-  core <- paste0(tag, "_core.csv"); tax <- paste0(tag, "_tax.csv")
+  core <- paste0(tag, "_core.csv"); tax <- paste0(tag, "_tax.parquet")
+  tax_early <- paste0(tag, "_tax_early.parquet")
   cms  <- paste0(tag, "_cms.csv");  nuc <- paste0(tag, "_nucc.csv")
   readr::write_csv(tibble::tibble(npi = npi, entity = 1L, pfname = first, pmname = mid,
                                   plname = last, plocstatename = state, ploczip = zip,
                                   pmailstatename = state, pmailzip = zip), core)
-  readr::write_csv(tibble::tibble(NPI = npi,
-                                  `Healthcare Provider Taxonomy Code_1` = "207R00000X"), tax)
+  arrow::write_parquet(tibble::tibble(npi = npi, seq = 1L, ptaxcode = "207R00000X"), tax)
   readr::write_csv(tibble::tibble(Code = "207R00000X",
                                   Grouping = "Allopathic & Osteopathic Physicians"), nuc)
   readr::write_csv(tibble::tibble(NPI = npi, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), cms)
-  clean_physician_data(core, tax, cms, nuc, year, out_pth = paste0(tag, "_out/year={year}"))
+  arrow::write_parquet(tibble::tibble(npi = integer(0), seq = integer(0),
+                                      ptaxcode = character(0)), tax_early)
+  clean_physician_data(core, tax, tax_early, cms, nuc, year,
+                       out_pth = paste0(tag, "_out/year={year}"))
 }
 
 root <- file.path(tempdir(), "p2v_test")
@@ -333,12 +336,16 @@ bind_rows(
          pmailstatename = "CT", pmailzip = "06510")
 ) |> write_csv(core_both)
 
-write_csv(tibble(NPI = 31:34, `Healthcare Provider Taxonomy Code_1` = "207R00000X"), "tax.csv")
+# latest covers 31-32 only; 33 appears solely in the earliest extract (deactivated since)
+arrow::write_parquet(tibble(npi = c(31L, 32L, 34L), seq = 1L, ptaxcode = "207R00000X"),
+                     "tax_latest.parquet")
+arrow::write_parquet(tibble(npi = c(33L, 33L), seq = c(1L, 2L),
+                            ptaxcode = c("207R00000X", "999X")), "tax_earliest.parquet")
 write_csv(tibble(Code = "207R00000X", Grouping = "Allopathic & Osteopathic Physicians"), "nucc2.csv")
 write_csv(tibble(NPI = 31:34, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms2.csv")
 
-pp <- clean_physician_data(core_both, "tax.csv", "cms2.csv", "nucc2.csv", 2018,
-                           out_pth = "phys_yr/year={year}")
+pp <- clean_physician_data(core_both, "tax_latest.parquet", "tax_earliest.parquet",
+                           "cms2.csv", "nucc2.csv", 2018, out_pth = "phys_yr/year={year}")
 pd <- open_dataset(unique(dirname(pp))) |> collect()
 ok("organisations (entity 2) are excluded", !(34 %in% pd$npi))
 ok("individuals are kept", all(31:33 %in% pd$npi))
@@ -355,6 +362,9 @@ ok("output is partitioned year=/state=",
 ok("distinct in npi", nrow(pd) == n_distinct(pd$npi))
 ok("leading zeros survive the read (06510, not 6510)",
    pd$zip[pd$npi == 31] == "06510" && pd$zip[pd$npi == 32] == "02901")
+ok("an NPI present only in the EARLIEST taxonomy extract is still kept", 33 %in% pd$npi)
+ok("only seq == 1 is used, so a second taxonomy row does not duplicate the NPI",
+   sum(pd$npi == 33) == 1)
 
 ## ------------------------------------------------------------- NPPES URLs
 ## Table logic only -- no network. The URLs themselves were verified by hand against NBER;

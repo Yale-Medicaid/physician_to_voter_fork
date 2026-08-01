@@ -4,11 +4,10 @@
 #'
 #' - **NBER `core`** (per year) -- names and addresses. This is the only per-year source;
 #'   it is what makes the physician side vary across the panel.
-#' - **CMS NPPES dissemination** (one fixed snapshot) -- taxonomy code. NBER's `core` file
-#'   has no taxonomy field at all, and their `ptaxcode` byvar files are published under
-#'   four different naming schemes, are missing entirely for 2018, and carry vintages up to
-#'   eleven months adrift from the matching `core` file. Primary taxonomy is near-static per
-#'   NPI, so a single complete snapshot beats a filter that flickers by vintage.
+#' - **NBER `ptaxcode`**, two extracts only -- taxonomy code. NBER's `core` has no taxonomy
+#'   field. Their per-year `ptaxcode` coverage is too irregular to build a panel from, so
+#'   the latest extract is used for everyone currently enumerated, with the earliest
+#'   unioned in to recover NPIs deactivated since. See `nppes_taxonomy_url()`.
 #' - **NUCC crosswalk** and **CMS Physician Compare** -- taxonomy descriptions, and
 #'   graduation year / medical school.
 #'
@@ -22,14 +21,16 @@
 #' what `figures/processing.png` described.
 #'
 #' @param nppes_core_file per-year NBER core file from `download_nppes_core()`
-#' @param taxonomy_file CMS NPPES dissemination csv, used only for taxonomy
+#' @param taxonomy_latest,taxonomy_earliest NBER ptaxcode files from
+#'   `download_nppes_taxonomy()`
 #' @param cms_file CMS Physician Compare csv (grd_yr, med_sch)
 #' @param nucc_file NUCC taxonomy crosswalk
 #' @param year the year being built
 #' @param out_pth glue template; output is partitioned `year=/state=`
 #'
 #' @return `out_pth` -- one row per NPI, asserted distinct
-clean_physician_data <- function(nppes_core_file, taxonomy_file, cms_file, nucc_file, year,
+clean_physician_data <- function(nppes_core_file, taxonomy_latest, taxonomy_earliest,
+														 cms_file, nucc_file, year,
 																 out_pth = "trunk/derived/physician_data/year={year}") {
 	out_pth <- glue::glue(out_pth)
 	unlink(out_pth, recursive = TRUE)
@@ -49,11 +50,25 @@ clean_physician_data <- function(nppes_core_file, taxonomy_file, cms_file, nucc_
 
 	cms_data <- anti_join(cms_raw, conflicted_npi, by = "npi")
 
-	# taxonomy: npi -> code, from the fixed CMS dissemination snapshot
-	taxonomy <- arrow::open_dataset(taxonomy_file, format = "csv") %>%
-		select(npi = NPI,
-					 taxonomy_code = `Healthcare Provider Taxonomy Code_1`) %>%
-		collect()
+	# taxonomy: npi -> primary code. seq == 1 is the first listed taxonomy, matching the
+	# `_1` suffix the dissemination file used, so the filter is unchanged in meaning.
+	#
+	# Latest first, then any NPI seen only in the earliest extract -- those are providers
+	# deactivated at some point in the panel, who would otherwise drop out of the early
+	# years entirely.
+	read_taxonomy <- function(pth) {
+		arrow::open_dataset(pth) %>%
+			filter(seq == 1) %>%
+			select(npi, taxonomy_code = ptaxcode) %>%
+			collect()
+	}
+
+	tax_latest <- read_taxonomy(taxonomy_latest)
+
+	taxonomy <- bind_rows(
+		tax_latest,
+		anti_join(read_taxonomy(taxonomy_earliest), tax_latest, by = "npi")
+	)
 
 	nucc_data <- read_csv(nucc_file, show_col_types = FALSE) %>%
 		rename_with(~tolower(gsub(" ", "_", .x)))

@@ -75,8 +75,69 @@ nppes_core_url <- function(year) {
 #'
 #' @return path to the downloaded file
 download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 3600) {
-  spec <- nppes_core_url(year)
-  dest <- file.path(out_dir, basename(spec$url))
+  download_nber_file(nppes_core_url(year)$url, out_dir = out_dir, timeout = timeout)
+}
+
+
+#' NBER taxonomy (`ptaxcode`) files, earliest and latest
+#'
+#' @description Taxonomy comes from NBER rather than the CMS dissemination file so that
+#' every input in this pipeline is fetched from one static archive. CMS reorganises its
+#' download pages; NBER's tree does not.
+#'
+#' Only two extracts are used, not one per year. NBER's taxonomy coverage is too irregular
+#' for a per-year panel -- four naming schemes, nothing for 2018, and vintages up to eleven
+#' months adrift from the matching `core` file. Primary taxonomy is near-static per NPI, so
+#' two bookends give effectively full coverage:
+#'
+#' - **latest** (2025-12) for everyone currently enumerated;
+#' - **earliest** (2019-07) to pick up NPIs that were present early and have since been
+#'   deactivated, who would otherwise be missing from the panel's early years.
+#'
+#' 2019-07 is genuinely the earliest available: 2018 has no taxonomy file of any kind, and
+#' 2019 begins in July.
+#'
+#' @param which `"earliest"` or `"latest"`
+#'
+#' @return a one-row tibble of `which`, `vintage`, `url`
+nppes_taxonomy_url <- function(which = c("latest", "earliest")) {
+  which <- rlang::arg_match(which)
+
+  urls <- tibble::tribble(
+    ~"which",     ~"vintage",  ~"url",
+    "earliest",   "2019-07",   "https://data.nber.org/npi/2019/07/byvar/PTAXCODE_201907.parquet",
+    "latest",     "2025-12",   "https://data.nber.org/npi/2025/12/byvar/PTAXCODE_202512.parquet"
+  )
+
+  dplyr::filter(urls, which == !!which)
+}
+
+
+#' Download one NBER taxonomy file
+#'
+#' @param which `"earliest"` or `"latest"`
+#' @param out_dir directory to download into
+#' @param timeout seconds to allow
+#'
+#' @return path to the downloaded file
+download_nppes_taxonomy <- function(which, out_dir = "trunk/raw/nppes", timeout = 3600) {
+  download_nber_file(nppes_taxonomy_url(which)$url, out_dir = out_dir, timeout = timeout)
+}
+
+
+#' Fetch a file from NBER, once
+#'
+#' @description Idempotent: an already-present file is returned untouched. Downloads land
+#' on a `.part` name first, so an interrupted transfer cannot leave a truncated file that
+#' the idempotency check would then accept forever.
+#'
+#' @param url file to fetch
+#' @param out_dir directory to download into
+#' @param timeout seconds to allow; the default `options(timeout=)` of 60 is far too short
+#'
+#' @return path to the downloaded file
+download_nber_file <- function(url, out_dir = "trunk/raw/nppes", timeout = 3600) {
+  dest <- file.path(out_dir, basename(url))
 
   if (file.exists(dest)) {
     return(dest)
@@ -87,14 +148,12 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
   old <- options(timeout = timeout)
   on.exit(options(old), add = TRUE)
 
-  # download to a temporary name first, so an interrupted transfer cannot leave a
-  # truncated file that the idempotency check above would then happily accept forever
   part <- paste0(dest, ".part")
-  utils::download.file(spec$url, destfile = part, mode = "wb", quiet = TRUE)
+  utils::download.file(url, destfile = part, mode = "wb", quiet = TRUE)
 
   assertthat::assert_that(
     file.exists(part) && file.size(part) > 0,
-    msg = cli::format_error("Downloaded an empty file from {.url {spec$url}}")
+    msg = cli::format_error("Downloaded an empty file from {.url {url}}")
   )
 
   file.rename(part, dest)

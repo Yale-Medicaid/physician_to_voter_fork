@@ -503,21 +503,34 @@ Do not replace the table with a rule. Four schemes plus a truncated year means a
 | Source | Varies by year? | Gives |
 | --- | --- | --- |
 | NBER `core` | **yes** | names, practice + mailing addresses |
-| CMS **NPPES dissemination** (fixed 2023 snapshot) | no | `healthcare_provider_taxonomy_code_1` |
+| NBER `ptaxcode`, two extracts | no | primary taxonomy code |
 | NUCC crosswalk | no | taxonomy grouping, for the physician filter |
 | CMS **DAC** / Physician Compare | no | `grd_yr`, `med_sch` |
 
-The two CMS files are different things and are easy to confuse: the *dissemination* file is
-genuinely NPPES; `DAC_NationalDownloadableFile.csv` is the Medicare "Doctors and Clinicians"
-file. Consequence: `grd_yr` — and so `year_dist` — is `NA` for any physician who does not
-bill Medicare. That is pre-existing, but it means the missingness tracks Medicare
-participation rather than data quality.
+Everything except the CMS DAC file now comes from **one static archive** (`data.nber.org`),
+deliberately — CMS reorganises its download pages, NBER's tree does not. The CMS NPPES
+dissemination file is no longer used at all; that target is gone, and with it a 9.4 GB
+manually-placed input.
 
-**Why taxonomy comes from a fixed snapshot rather than per year.** NBER's `core` has no
-taxonomy field. Their `ptaxcode` byvar files are published under four different naming
-schemes, are absent entirely for 2018, and carry vintages up to eleven months adrift from
-the matching `core` (2021's is January against a December core). Primary taxonomy is
-near-static per NPI, so one complete snapshot beats a filter that flickers by vintage.
+`DAC_NationalDownloadableFile.csv` is the Medicare "Doctors and Clinicians" file, not
+NPPES — easy to confuse. Consequence: `grd_yr`, and so `year_dist`, is `NA` for any
+physician who does not bill Medicare. Pre-existing, but it means that missingness tracks
+Medicare participation rather than data quality.
+
+**Taxonomy: two extracts, not one per year.** NBER's `core` has no taxonomy field, and
+their per-year `ptaxcode` coverage is too irregular to build a panel from — four naming
+schemes, nothing at all for 2018, vintages up to eleven months adrift from the matching
+`core` (2021's is January against a December core). So:
+
+- **latest** (2025-12) covers everyone currently enumerated;
+- **earliest** (2019-07, genuinely the earliest available) is unioned in for NPIs absent
+  from the latest — providers deactivated during the panel, who would otherwise vanish from
+  its early years.
+
+`seq == 1` selects the primary taxonomy, matching the `_1` suffix the dissemination file
+used, so the physician filter is unchanged in meaning. Filtering on `seq` also matters
+mechanically: `ptaxcode` has one row per taxonomy per NPI, so without it the join would
+duplicate providers.
 
 **Address: practice location, falling back to mailing.** `plocstatename`/`ploczip` with
 `pmailstatename`/`pmailzip` as fallback, and `addr_source` recording which was used. The
