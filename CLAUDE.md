@@ -161,10 +161,12 @@ if used:**
     read into the parquet but never referenced anywhere.
   - **`OccupationIndustry` disappearing in 2025+ is therefore moot** — nothing
     consumes it. It becomes a decision only if someone adds it as a feature.
-  - **Still to implement:** the rename itself. Deferred alongside the L2 parquet
-    source refactor, since that changes where L2 columns are selected and doing it
-    now would mean writing it twice. Note the code has no year dimension at all
-    today, so there is currently nowhere to branch on year.
+  - **Implemented.** `l2_occupation_col(year)` in `R/l2.R` returns the year's column name,
+    and `read_l2_partition()` canonicalises it to `CommercialData_Occupation` at
+    `R/locality_sensitive_hash.R:97,105` via `dplyr::rename(... = dplyr::any_of(occ_col))`.
+    `any_of()` rather than `all_of()` deliberately, so a year missing the column does not
+    error — though note that also means a *future* rename would fail silently, with every
+    occupation-derived column coming out empty rather than erroring.
 - Broader pattern: most `CommercialData_*` (2018) fields were renamed to
   `ConsumerData_*` (2025) — this is a wide, systemic rename. Only occupation
   has been checked in detail; other `CommercialData_*`/`ConsumerData_*` fields
@@ -941,8 +943,46 @@ because I wrote it.
     by = dplyr::join_by(npi, year)
   )
   ```
-- **Native `|>` only.** Zero `%>%` in the reference repo; this project still has many.
-- **Spaces, never tabs**, at 2 per level.
+- **Native `|>` only.** Zero `%>%` in the reference repo.
+- **Spaces, never tabs**, at 2 per level. `.Rproj` sets `NumSpacesForTab: 2`, so the old
+  tab-indented files converted faithfully with `expand -t2`.
+- **Tribble columns are not aligned either** — single space after each comma, and `~ "col"`
+  with a space after the tilde. Alignment there is still alignment.
+- **Line width is loose 80**: rewrap only what exceeds 100, and bring it under 80. Lines
+  between 81 and 100 stay as they are. Two exemptions, both because wrapping would do
+  damage: markdown table rows inside roxygen blocks (it breaks the rendering) and the
+  `l2_path` string literal in `_targets.R` (a string cannot be broken without changing it).
+
+Applied across `R/` and `_targets.R` in `refactor/style-pass`. Two traps found doing it:
+
+- **Adding a namespace moves the opening parenthesis**, so every paren-aligned continuation
+  silently goes out of alignment by the length of the prefix. Six needed re-indenting.
+  `scratchpad/align.pl`-style checking (compare each continuation's indent to the column
+  after the innermost unclosed `(`) is the only reliable way to catch them; note the checker
+  must mask string *contents* without changing their length, or it reports false positives.
+- **`pattern = map(...)` and `pattern = cross(...)` are targets' branching DSL, not purrr.**
+  A blanket namespacing pass will rewrite them to `purrr::map()` and break branching
+  entirely. They must stay bare.
+
+### ⚠ `packages = "grf"` on `scored_pairs` is load-bearing
+`tar_option_set()` no longer takes a project-wide `packages` argument, because everything in
+`R/` is namespaced. There is exactly **one** exception, declared per-target on `scored_pairs`.
+
+`score_pairs()` calls `predict()` on an `rf_model` built in a *different* target. S3 dispatch
+needs `predict.probability_forest`, which is registered only once grf is loaded — and nothing
+in that target calls `grf::` itself, so the namespace would never load. Verified by
+reproducing the failure in a fresh session:
+
+```
+no applicable method for 'predict' applied to an object of class
+c('probability_forest', 'grf')
+```
+
+This is the general hazard with dropping `packages`: namespacing fixes *calls*, but not **S3
+dispatch on a class that crosses a target boundary**. Anything else added later that returns
+a classed object from one target and dispatches on it in another needs the same treatment.
+`arrow` is fine by luck — its dplyr methods are registered because the same function also
+calls `arrow::open_dataset()`.
 
 ## Git workflow
 - **Never commit directly to `main`.** Always work on a feature branch.
