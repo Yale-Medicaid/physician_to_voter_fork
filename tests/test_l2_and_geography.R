@@ -12,7 +12,7 @@ suppressPackageStartupMessages({
 # source before the setwd() below -- these paths are relative to the repo root
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
 source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
-source("R/random_forest.R")
+source("R/random_forest.R"); source("R/reconcile.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -232,6 +232,54 @@ ok("cross-border output is partitioned by the PHYSICIAN's state",
    all(get_l2_state(b) == "CT"))
 ok("zip_dist across the border is a real positive distance",
    all(b_d$zip_dist > 0 & is.finite(b_d$zip_dist)))
+
+## ------------------------------------------------- cross-year reconciliation
+cat("\n== physician_year_panel / reconcile_physician_matches ==\n")
+# npi 21 -- same voter every year, high prob        -> not a mover
+# npi 22 -- DIFFERENT best voter in 2018 vs 2019    -> mover
+# npi 23 -- only appears in 2018 (stands in for a physician in a 2024-gap state)
+# npi 24 -- two candidates TIED for best in 2018    -> flagged, not dropped
+# npi 25 -- best match is cross-border
+for (y in c(2018L, 2019L)) {
+  dir.create(file.path("scored", paste0("year=", y)), recursive = TRUE, showWarnings = FALSE)
+  rows <- tibble(
+    npi = c(21, 21, 22, 24, 24, 25),
+    LALVOTERID = c("V21", "V21b", if (y == 2018) "V22a" else "V22b", "V24a", "V24b", "V25"),
+    match_prob = c(0.90, 0.30, 0.80, 0.60, 0.60, 0.70),
+    state_agree = c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
+    zip_dist = 5, full_name_sim = 0.95, n = 2L
+  )
+  if (y == 2018) rows <- bind_rows(rows, tibble(npi = 23, LALVOTERID = "V23",
+    match_prob = 0.75, state_agree = TRUE, zip_dist = 5, full_name_sim = 0.95, n = 1L))
+  write_parquet(rows, file.path("scored", paste0("year=", y), "part-0.parquet"))
+}
+scored <- file.path("scored", paste0("year=", c(2018L, 2019L)))
+
+pan <- physician_year_panel(scored, out_pth = "panel")
+pd <- open_dataset(pan) |> collect()
+ok("panel keeps only each year's best candidate",
+   nrow(filter(pd, npi == 21)) == 2 && all(pd$match_prob[pd$npi == 21] == 0.90))
+ok("tied candidates are KEPT, not dropped", sum(pd$npi == 24 & pd$year == 2018) == 2)
+ok("ties are flagged", all(pd$tied[pd$npi == 24]))
+ok("untied rows are not flagged", !any(pd$tied[pd$npi == 21]))
+
+rec <- reconcile_physician_matches(pan, out_pth = "matches")
+rd <- open_dataset(rec) |> collect()
+ok("one row per physician", nrow(rd) == n_distinct(rd$npi))
+ok("stable physician is not a mover", !rd$mover[rd$npi == 21])
+ok("physician whose best voter changes IS a mover", rd$mover[rd$npi == 22])
+ok("mover has 2 distinct voters", rd$n_distinct_voters[rd$npi == 22] == 2)
+ok("best match is the highest probability found in any year",
+   rd$best_match_prob[rd$npi == 21] == 0.90 && rd$best_LALVOTERID[rd$npi == 21] == "V21")
+ok("a physician present in only one year is NOT flagged as a mover",
+   !rd$mover[rd$npi == 23])
+ok("...and its missing year shows as n_years_matched, not as a failure",
+   rd$n_years_matched[rd$npi == 23] == 1)
+ok("tie is carried through to the physician level", rd$any_tied[rd$npi == 24])
+ok("cross-border best match is flagged", rd$best_cross_border[rd$npi == 25])
+ok("in-state best match is not", !rd$best_cross_border[rd$npi == 21])
+ok("no match_prob cutoff is applied -- weak matches still appear",
+   min(rd$best_match_prob) < 0.75)
 
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",

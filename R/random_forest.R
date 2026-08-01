@@ -131,7 +131,14 @@ score_pairs <- function(lsh_pairs, cross_border_pairs, rf_model, this_year,
 
 	pairs$match_prob <- predict(rf_model, newdata = make_X_matrix(pairs))$predictions[,2]
 
-	write_dataset(pairs, out_pth)
+	# Drop the redundant `year` column before writing. out_pth is itself a `year=` hive
+	# directory, so keeping the column means a re-read sees `year` from two sources -- and
+	# arrow refuses to merge them if the types differ at all ("Field year has incompatible
+	# types: double vs int32"). Letting the partition key be the single source removes the
+	# whole class of failure. `state` is kept: it is a plain column here, not a key.
+	pairs %>%
+		select(-any_of("year")) %>%
+		write_dataset(out_pth)
 
 	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }

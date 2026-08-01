@@ -413,6 +413,38 @@ I initially argued the opposite — that Stage B would need a hand-labelled cros
 sample before its candidates could be scored properly. That overstated the problem: it
 treated the state boundary as the causal variable when distance is.
 
+## Stage D output, and what `mover` does not mean
+Two targets: `physician_year_panel_data` (one row per npi-year, the year's best voter) and
+`physician_matches` (one row per npi, asserted distinct).
+
+- **No `match_prob` cutoff is applied at either step.** Thresholding is the consumer's
+  choice, so every physician with any candidate appears, however weak.
+- **Ties are kept and flagged (`tied`, `any_tied`), not dropped.** Two candidates at
+  identical probability is a real state of affairs; dropping the physician would quietly
+  shrink the panel.
+- **`mover` means the best-matching voter changed between years — nothing more.** That is
+  consistent with a genuine move, and equally with two similar voters trading places
+  because of scoring noise. It is a flag to investigate, not a finding.
+- **A physician absent from a year is not a failed match.** 2024 MD/MS/NV physicians simply
+  have a lower `n_years_matched`. No special case is needed, but do not read the shortfall
+  as non-matching.
+
+### The `year` column / hive key collision
+`score_pairs()` **drops the `year` column before writing**, because its `out_pth` is itself
+a `year=` hive directory. Keeping it means a re-read sees `year` from two sources, and
+arrow refuses to merge them the moment the types differ at all —
+`Field year has incompatible types: double vs int32`.
+
+Types happen to line up in the current pipeline, so this was latent rather than broken; it
+surfaced in a test fixture that built `year` as a double. Note `get_l2_year()` returns
+`as.numeric()`, i.e. double, so a double `year` is one small refactor away. Letting the
+partition key be the single source removes the whole class of failure.
+
+Note also the root-recovery asymmetry this creates: `lsh_pairs` and `cross_border_pairs`
+return paths two levels deep (`year=/state=`) and need `dirname(dirname())`, while
+`scored_pairs` is one level (`year=`) and needs a single `dirname()`. That is structural —
+they branch over different keys — not an inconsistency to tidy away.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:
