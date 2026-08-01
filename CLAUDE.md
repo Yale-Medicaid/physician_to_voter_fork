@@ -457,6 +457,46 @@ return paths two levels deep (`year=/state=`) and need `dirname(dirname())`, whi
 `scored_pairs` is one level (`year=`) and needs a single `dirname()`. That is structural —
 they branch over different keys — not an inconsistency to tidy away.
 
+## Use `!!`, not `{{ }}`, to disambiguate an argument from a same-named column
+Several functions take a `year` or `state` argument and filter a dataset whose hive
+partition columns have the *same names*. The tempting tidyeval form is wrong:
+
+```r
+f <- function(year) dplyr::filter(ds, year == {{year}})   # WRONG
+```
+
+`{{ }}` injects the argument **expression**. Called as `f(2024)` that is the literal and it
+works — but called as `f(year)` from another function, it injects the *symbol* `year`, the
+data mask resolves it to the column, and `year == year` is trivially true for every row.
+The filter silently does nothing.
+
+`!!year` injects the **value**, evaluated in the function's own environment, and is robust
+regardless of what the caller names its locals. `.env$year` also works; `!!` was chosen to
+keep the tidyeval style.
+
+This bit for real. `nppes_core_url()` failed exactly this way the first time
+`download_nppes_core()` called it. `unmatched_physicians()` had the same latent bug and
+was working only because `lsh_cross_border()` happens to pass locals named `this_year` and
+`this_state` — rename those and it would have started matching every row, silently. Both
+now use `!!`, and both have a test that calls them from a wrapper whose locals *are* named
+`year`/`state`.
+
+## NPPES: four layouts, one truncated year
+`nppes_core_url()` is an explicit 8-row table, not a constructed URL. NBER uses four
+different layouts across 2018–2025 and the documented
+`/{YYYY}/{MM}/core_{YYYYMM}_csv.zip` pattern resolves for only three years.
+
+- **Vintage is the latest month available per year**: December everywhere except **2023,
+  which stops at May**. There is no month present in all eight years — 2019 starts in July,
+  2023 ends in May — so a uniform vintage is not available from this source.
+- **Format is parquet where it exists, CSV otherwise**: 2018 has no parquet at all, and
+  2023's May file has none either (its Jan–Apr files do, but those are older vintages).
+- Downloads are **idempotent** and go via a `.part` file, so an interrupted transfer cannot
+  leave a truncated file that the idempotency check would then accept forever.
+
+Do not replace the table with a rule. Four schemes plus a truncated year means a rule fails
+*silently* on the next reorganisation; a listed URL that stops resolving fails loudly.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:

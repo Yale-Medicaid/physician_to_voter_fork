@@ -12,6 +12,7 @@ source("R/random_forest.R")
 source("R/l2.R")
 source("R/geographic.R")
 source("R/reconcile.R")
+source("R/nppes.R")
 source("R/helpers.R")
 #source("R/match_diagnostics.R")
 
@@ -42,6 +43,13 @@ list(
 	targets::tar_target(l2_extracts,
 											resolve_l2_extract(states, years, l2_path),
 											pattern = cross(years, states),
+											format = "file"),
+
+	# NPPES core files from NBER, one per year, downloaded on demand. Idempotent: an
+	# already-present file is returned untouched rather than re-fetched.
+	targets::tar_target(nppes_core_files,
+											download_nppes_core(years),
+											pattern = map(years),
 											format = "file"),
 
 	# clean physician data

@@ -12,7 +12,7 @@ suppressPackageStartupMessages({
 # source before the setwd() below -- these paths are relative to the repo root
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
 source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
-source("R/random_forest.R"); source("R/reconcile.R")
+source("R/random_forest.R"); source("R/reconcile.R"); source("R/nppes.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -168,6 +168,10 @@ ok("the state/year filter uses the arguments, not the hive columns of the same n
    nrow(unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2019)) == 5)
 ok("NULL lsh_pairs sends everyone cross-border",
    nrow(unmatched_physicians(phys, NULL, "CT", 2018)) == 5)
+# the shape that {{ }} got wrong: a caller whose locals share the column names
+ok("filter is robust to a caller whose locals are named state/year",
+   (\() { state <- "CT"; year <- 2019
+          nrow(unmatched_physicians(phys, "lsh/year=2018/state=CT", state, year)) })() == 5)
 ok("a state with no physicians returns NULL",
    is.null(unmatched_physicians(phys, "lsh/year=2018/state=CT", "NY", 2018)))
 
@@ -302,6 +306,43 @@ ok("cross-border best match is flagged", rd$best_cross_border[rd$npi == 25])
 ok("in-state best match is not", !rd$best_cross_border[rd$npi == 21])
 ok("no match_prob cutoff is applied -- weak matches still appear",
    min(rd$best_match_prob) < 0.75)
+
+## ------------------------------------------------------------- NPPES URLs
+## Table logic only -- no network. The URLs themselves were verified by hand against NBER;
+## re-verifying them here would make the suite slow and offline-hostile.
+cat("\n== nppes_core_url / download_nppes_core ==\n")
+all_urls <- purrr::map(2018:2025, nppes_core_url) |> purrr::list_rbind()
+ok("every year 2018-2025 is covered", nrow(all_urls) == 8)
+ok("one row per year", !any(duplicated(all_urls$year)))
+ok("no duplicated URLs", !any(duplicated(all_urls$url)))
+ok("every URL points at NBER's npi tree",
+   all(startsWith(all_urls$url, "https://data.nber.org/npi/")))
+ok("the year in each URL matches its row",
+   all(purrr::map2_lgl(all_urls$year, all_urls$url, \(y, u) grepl(as.character(y), u, fixed = TRUE))))
+ok("file extension agrees with the declared format",
+   all(tools::file_ext(all_urls$url) == all_urls$format))
+ok("2018 is csv (NBER publishes no parquet for it)",
+   all_urls$format[all_urls$year == 2018] == "csv")
+ok("2023 is csv and stops at May, not December",
+   all_urls$format[all_urls$year == 2023] == "csv" && all_urls$month[all_urls$year == 2023] == 5)
+ok("every other year is parquet at December",
+   all(all_urls$format[!all_urls$year %in% c(2018, 2023)] == "parquet") &&
+     all(all_urls$month[!all_urls$year %in% c(2018, 2023)] == 12))
+ok("an uncovered year fails loudly rather than returning nothing",
+   inherits(try(nppes_core_url(1999), silent = TRUE), "try-error"))
+
+ok("URL lookup is robust to a caller whose local is named `year`",
+   (\() { year <- 2024; nrow(nppes_core_url(year)) })() == 1)
+
+# idempotency, without downloading: plant the file the function would fetch
+dir.create("nppes_dl", showWarnings = FALSE)
+planted <- file.path("nppes_dl", basename(nppes_core_url(2024)$url))
+writeLines("not really a parquet file", planted)
+before <- file.mtime(planted)
+got <- download_nppes_core(2024, out_dir = "nppes_dl")
+ok("an already-present file is returned, not re-downloaded",
+   normalizePath(got) == normalizePath(planted) && file.mtime(planted) == before)
+ok("no .part leftover", length(list.files("nppes_dl", pattern = "[.]part$")) == 0)
 
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",

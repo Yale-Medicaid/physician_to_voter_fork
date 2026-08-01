@@ -160,9 +160,12 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
     tibble::tibble(npi = phys$npi[0], n_strong = integer(0))
   } else {
     arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
-      # {{ }} injects the argument's value, disambiguating it from the identically
-      # named hive partition columns
-      dplyr::filter(year == {{year}}, state == {{state}}) |>
+      # !! injects the argument's *value*, disambiguating it from the identically named
+      # hive partition columns. Not {{ }}: the embrace injects the argument *expression*,
+      # so a caller passing a local also called `year` would inject the symbol, the data
+      # mask would resolve it to the column, and `year == year` would match every row.
+      # This worked only because lsh_cross_border() happens to pass `this_year`.
+      dplyr::filter(year == !!year, state == !!state) |>
       dplyr::filter(full_name_sim >= min_name_sim) |>
       dplyr::count(npi, name = "n_strong") |>
       dplyr::collect()
