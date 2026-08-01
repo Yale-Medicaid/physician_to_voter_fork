@@ -12,6 +12,7 @@ suppressPackageStartupMessages({
 # source before the setwd() below -- these paths are relative to the repo root
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
 source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
+source("R/random_forest.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -222,6 +223,11 @@ ok("...matched to a NY voter", all(b_d$st.y[b_d$npi == 12] == "ny"))
 ok("physician with a unique strong in-state match is NOT retried", !(11 %in% b_d$npi))
 ok("state_agree is TRUE for every in-state pair", all(a_d$state_agree))
 ok("state_agree is FALSE for every cross-border pair", all(!b_d$state_agree))
+ok("state_agree is carried in the output but is NOT an RF feature",
+   "state_agree" %in% names(b_d) &&
+     !("state_agree" %in% colnames(make_X_matrix(mutate(b_d, n = 1L)))))
+ok("the RF matrix has 8 features",
+   ncol(make_X_matrix(mutate(b_d, n = 1L))) == 8)
 ok("cross-border output is partitioned by the PHYSICIAN's state",
    all(get_l2_state(b) == "CT"))
 ok("zip_dist across the border is a real positive distance",

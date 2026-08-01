@@ -3,14 +3,21 @@
 #' @description Extract the predictors used for a classification model, and format them as a
 #' numeric matrix.
 #'
-#' **`state_agree` is included but currently inert.** It distinguishes an in-state pair from
-#' a cross-border one, so it only becomes meaningful once Stage B produces cross-border
-#' candidates. The existing labelled data is entirely same-state, so `state_agree` is
-#' constant `TRUE` in training and `grf` cannot split on it -- cross-border pairs are
-#' therefore scored on the other eight features alone, by a model that has never seen a
-#' true cross-border match. It is wired up now so that a retrain on cross-border labels
-#' picks it up without another code change; until that retrain, expect Stage B's candidates
-#' to be scored with no cross-border-specific signal at all.
+#' **`state_agree` is deliberately NOT a feature**, though it is computed and carried.
+#' Crossing a state line is not what makes a match implausible -- distance is, and
+#' `zip_dist` already measures that directly. A physician living 15 miles away across a
+#' border is nearer than one living 60 miles away in-state, and the model should treat them
+#' accordingly.
+#'
+#' This also means the model transfers to cross-border pairs without new labels. The
+#' training data is same-state only, but intra-state distances in large states run to
+#' hundreds of miles, so `zip_dist` at (say) 67 miles is well inside the range the model has
+#' already learned from -- it simply learned it from Texas rather than from a border
+#' crossing. Adding `state_agree` would have contributed nothing that `zip_dist` does not
+#' carry better, while being constant in training and so unsplittable anyway.
+#'
+#' It stays in the output as a diagnostic: it is the natural way to ask what share of
+#' high-probability matches are cross-border.
 #'
 #' @param df the input dataframe
 #'
@@ -35,7 +42,7 @@ make_X_matrix <- function(df) {
 			occ_unknown = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown"
 		) %>%
 		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n,
-					 occ_medical, occ_unknown, state_agree) %>%
+					 occ_medical, occ_unknown) %>%
 		# Coerce logicals to 0/1 rather than letting model.matrix expand them. Under
 		# `~ -1 + .` a logical yields both a ...FALSE and a ...TRUE dummy, so
 		# selecting 6 columns emitted a 7-column matrix with a perfectly

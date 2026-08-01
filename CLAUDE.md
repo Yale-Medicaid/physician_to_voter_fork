@@ -395,6 +395,24 @@ unblocks replacing the manual `source()` calls in Phase 4.
 
 Keep `R/` pure. Anything that runs at load time belongs in `scripts/`.
 
+## Why the RF has 8 features and not 9
+`state_agree` is computed in the comparison block and carried into the output, but is
+**not** in `make_X_matrix()`. That is deliberate, and the reasoning is worth keeping
+because the omission looks like an oversight:
+
+- A state line is a partitioning artifact, not a commuting barrier. `zip_dist` already
+  measures the thing that actually matters, and measures it continuously.
+- The model transfers to cross-border pairs **without new labels**. Training data is
+  same-state only, but intra-state distances in large states run to hundreds of miles, so a
+  67-mile cross-border pair sits well inside the `zip_dist` range the model already learned
+  from — it just learned it from Texas rather than from a border crossing.
+- `state_agree` is constant `TRUE` in the existing labels, so `grf` could not split on it
+  regardless. Adding it would have been inert *and* redundant.
+
+I initially argued the opposite — that Stage B would need a hand-labelled cross-border
+sample before its candidates could be scored properly. That overstated the problem: it
+treated the state boundary as the causal variable when distance is.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:
