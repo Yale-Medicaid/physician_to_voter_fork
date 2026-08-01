@@ -497,6 +497,43 @@ different layouts across 2018–2025 and the documented
 Do not replace the table with a rule. Four schemes plus a truncated year means a rule fails
 *silently* on the next reorganisation; a listed URL that stops resolving fails loudly.
 
+## Physician side: three sources, one per-year table
+`clean_physician_data()` builds one table per year from:
+
+| Source | Varies by year? | Gives |
+| --- | --- | --- |
+| NBER `core` | **yes** | names, practice + mailing addresses |
+| CMS **NPPES dissemination** (fixed 2023 snapshot) | no | `healthcare_provider_taxonomy_code_1` |
+| NUCC crosswalk | no | taxonomy grouping, for the physician filter |
+| CMS **DAC** / Physician Compare | no | `grd_yr`, `med_sch` |
+
+The two CMS files are different things and are easy to confuse: the *dissemination* file is
+genuinely NPPES; `DAC_NationalDownloadableFile.csv` is the Medicare "Doctors and Clinicians"
+file. Consequence: `grd_yr` — and so `year_dist` — is `NA` for any physician who does not
+bill Medicare. That is pre-existing, but it means the missingness tracks Medicare
+participation rather than data quality.
+
+**Why taxonomy comes from a fixed snapshot rather than per year.** NBER's `core` has no
+taxonomy field. Their `ptaxcode` byvar files are published under four different naming
+schemes, are absent entirely for 2018, and carry vintages up to eleven months adrift from
+the matching `core` (2021's is January against a December core). Primary taxonomy is
+near-static per NPI, so one complete snapshot beats a filter that flickers by vintage.
+
+**Address: practice location, falling back to mailing.** `plocstatename`/`ploczip` with
+`pmailstatename`/`pmailzip` as fallback, and `addr_source` recording which was used. The
+pipeline previously used the *mailing* address everywhere, which never matched what
+`figures/processing.png` described — a mailing address can be a billing office or a PO box,
+which is not what `zip_dist` is meant to measure.
+
+**ZIP columns must be read as strings.** `read_nppes_core()` pins `ploczip` and `pmailzip`
+via a partial `col_types` schema. Left to inference a CSV ZIP becomes an integer and loses
+its leading zero — `06510` reads back as `6510` — which then fails every ZCTA centroid
+lookup silently, because the centroid table is zero-padded. Same trap as the centroid file
+itself; it bites on both sides.
+
+Output is partitioned `year=/state=`, so each matching branch prunes to one directory
+instead of scanning nationally 408 times.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:

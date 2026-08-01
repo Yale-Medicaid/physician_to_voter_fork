@@ -63,7 +63,14 @@ list(
 	# files contain -- see that function for why we compute rather than look up.
 	tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv", format = "file"),
 
-	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "file"),
+	# One physician table per year: names and addresses from that year's NBER core file,
+	# taxonomy from the fixed CMS snapshot. Partitioned year=/state= so each matching
+	# branch prunes to its own directory instead of scanning nationally.
+	targets::tar_target(physician_data,
+											clean_physician_data(nppes_core_files, nppes_file, cms_file,
+																					 nucc_taxonomy_file, years),
+											pattern = map(years, nppes_core_files),
+											format = "file"),
 
 	# How much the "drop NPIs with conflicting CMS records" rule in
 	# clean_physician_data() actually costs, and which field disagrees. Small, so it

@@ -21,6 +21,21 @@ ok <- function(label, cond) {
   cat(sprintf("  [%s] %s\n", if (cond) "ok" else "FAIL", label))
 }
 
+# Build a physician dataset in the NBER `core` schema. Used by several sections below.
+make_phys <- function(npi, first, mid, last, state, zip, year = 2018, tag = "p") {
+  core <- paste0(tag, "_core.csv"); tax <- paste0(tag, "_tax.csv")
+  cms  <- paste0(tag, "_cms.csv");  nuc <- paste0(tag, "_nucc.csv")
+  readr::write_csv(tibble::tibble(npi = npi, entity = 1L, pfname = first, pmname = mid,
+                                  plname = last, plocstatename = state, ploczip = zip,
+                                  pmailstatename = state, pmailzip = zip), core)
+  readr::write_csv(tibble::tibble(NPI = npi,
+                                  `Healthcare Provider Taxonomy Code_1` = "207R00000X"), tax)
+  readr::write_csv(tibble::tibble(Code = "207R00000X",
+                                  Grouping = "Allopathic & Osteopathic Physicians"), nuc)
+  readr::write_csv(tibble::tibble(NPI = npi, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), cms)
+  clean_physician_data(core, tax, cms, nuc, year, out_pth = paste0(tag, "_out/year={year}"))
+}
+
 root <- file.path(tempdir(), "p2v_test")
 unlink(root, recursive = TRUE)
 dir.create(root, recursive = TRUE)
@@ -125,17 +140,12 @@ ok("every abbreviation is a real state or DC",
 
 ## ------------------------------------------------ unmatched_physicians
 cat("\n== unmatched_physicians ==\n")
-write_csv(tibble(NPI = 1:5,
-                 `Provider First Name` = c("Aaardvarkina","Bloopberta","Squibbly","Fakeworth","Grumbelina"),
-                 `Provider Middle Name` = c("Q", NA, "Zebulon", "X", "J"),
-                 `Provider Last Name (Legal Name)` = c("Zzyzxton","Quibblesnort","Fakenheimer","Notarealname","Blorptastic"),
-                 `Provider Business Mailing Address State Name` = "CT",
-                 `Provider Business Mailing Address Postal Code` = "06510",
-                 `Healthcare Provider Taxonomy Code_1` = "207R00000X",
-                 `Entity Type Code` = 1L), "nppes.csv")
-write_csv(tibble(Code = "207R00000X", Grouping = "Allopathic & Osteopathic Physicians"), "nucc.csv")
-write_csv(tibble(NPI = 1:5, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms.csv")
-phys <- clean_physician_data("cms.csv", "nppes.csv", "nucc.csv", out_pth = "phys")
+nm  <- c("Aaardvarkina","Bloopberta","Squibbly","Fakeworth","Grumbelina")
+mid <- c("Q", NA, "Zebulon", "X", "J")
+ln  <- c("Zzyzxton","Quibblesnort","Fakenheimer","Notarealname","Blorptastic")
+phys <- make_phys(1:5, nm, mid, ln, "CT", "06510", year = 2018, tag = "um")
+# a second year, so the year filter has something to discriminate between
+invisible(make_phys(1:5, nm, mid, ln, "CT", "06510", year = 2019, tag = "um"))
 
 # Stage A results per physician:
 #   npi 1 -- ONE strong candidate (0.99)        -> exempt
@@ -161,9 +171,9 @@ ok("lowering the cutoff to 0.75 exempts the 0.80 case",
 ok("exactly ONE strong candidate is exempt", !(1 %in% u$npi))
 ok("THREE strong candidates are retried -- uniqueness is required, not just a high max",
    5 %in% u$npi)
-# 2019 has no Stage A data, so nobody has an in-state match and all 4 go cross-border.
-# If the filter read the hive `year` column instead of the argument it would match 2018
-# and return 2, so this pins the {{ }} disambiguation.
+# 2019 has physicians but no Stage A output, so all 5 go cross-border. If the filter read
+# the hive `year` column instead of the argument it would pick up 2018's matches and
+# return fewer -- so this pins the !! disambiguation.
 ok("the state/year filter uses the arguments, not the hive columns of the same name",
    nrow(unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2019)) == 5)
 ok("NULL lsh_pairs sends everyone cross-border",
@@ -179,16 +189,9 @@ ok("a state with no physicians returns NULL",
 cat("\n== lsh_cross_border ==\n")
 # CT and NY are adjacent. npi 12 practises in CT but lives in NY, with no CT namesake.
 # npi 11 has a unique strong CT match and must stay exempt.
-write_csv(tibble(NPI = 11:12,
-                 `Provider First Name` = c("Aaardvarkina","Bloopberta"),
-                 `Provider Middle Name` = c("Q","Zebulon"),
-                 `Provider Last Name (Legal Name)` = c("Zzyzxton","Crossborderson"),
-                 `Provider Business Mailing Address State Name` = "CT",
-                 `Provider Business Mailing Address Postal Code` = "06510",
-                 `Healthcare Provider Taxonomy Code_1` = "207R00000X",
-                 `Entity Type Code` = 1L), "xb_nppes.csv")
-write_csv(tibble(NPI = 11:12, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "xb_cms.csv")
-xb_phys <- clean_physician_data("xb_cms.csv", "xb_nppes.csv", "nucc.csv", out_pth = "xb_phys")
+xb_phys <- make_phys(11:12, c("Aaardvarkina","Bloopberta"), c("Q","Zebulon"),
+                     c("Zzyzxton","Crossborderson"), "CT", "06510",
+                     year = 2018, tag = "xb")
 
 mkv <- function(first, mid, last, state, zip, id) tibble(
   LALVOTERID = id, Voters_FirstName = first, Voters_MiddleName = mid,
@@ -306,6 +309,52 @@ ok("cross-border best match is flagged", rd$best_cross_border[rd$npi == 25])
 ok("in-state best match is not", !rd$best_cross_border[rd$npi == 21])
 ok("no match_prob cutoff is applied -- weak matches still appear",
    min(rd$best_match_prob) < 0.75)
+
+## ------------------------------------------- per-year physician data
+cat("\n== clean_physician_data (NBER core schema) ==\n")
+# NBER core column names, and three address situations:
+#   npi 31 -- practice address present            -> uses practice
+#   npi 32 -- practice BLANK, mailing present     -> falls back to mailing
+#   npi 33 -- practice present but in another state than mailing -> practice wins
+# NB: build the combined frame in memory. Round-tripping through readr::read_csv() would
+# strip the leading zeros from the ZIPs before read_nppes_core() ever sees the file, and
+# the test would then be checking its own corruption rather than the code.
+core_both <- "core_all.csv"
+bind_rows(
+  tibble(npi = 31:33, entity = 1L,
+         pfname = c("Aaardvarkina","Bloopberta","Squibbly"),
+         pmname = c("Q", NA, "Zebulon"),
+         plname = c("Zzyzxton","Quibblesnort","Fakenheimer"),
+         plocstatename = c("CT", "",  "NY"), ploczip = c("06510", "", "10001"),
+         pmailstatename = c("MA", "RI", "CT"), pmailzip = c("02101", "02901", "06510")),
+  # an organisation, which must be excluded
+  tibble(npi = 34L, entity = 2L, pfname = NA, pmname = NA, plname = NA,
+         plocstatename = "CT", ploczip = "06510",
+         pmailstatename = "CT", pmailzip = "06510")
+) |> write_csv(core_both)
+
+write_csv(tibble(NPI = 31:34, `Healthcare Provider Taxonomy Code_1` = "207R00000X"), "tax.csv")
+write_csv(tibble(Code = "207R00000X", Grouping = "Allopathic & Osteopathic Physicians"), "nucc2.csv")
+write_csv(tibble(NPI = 31:34, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "cms2.csv")
+
+pp <- clean_physician_data(core_both, "tax.csv", "cms2.csv", "nucc2.csv", 2018,
+                           out_pth = "phys_yr/year={year}")
+pd <- open_dataset(unique(dirname(pp))) |> collect()
+ok("organisations (entity 2) are excluded", !(34 %in% pd$npi))
+ok("individuals are kept", all(31:33 %in% pd$npi))
+ok("practice address is used when present",
+   pd$state[pd$npi == 31] == "CT" && pd$zip[pd$npi == 31] == "06510")
+ok("falls back to mailing when practice is blank",
+   pd$state[pd$npi == 32] == "RI" && pd$zip[pd$npi == 32] == "02901")
+ok("practice wins over a DIFFERENT mailing state", pd$state[pd$npi == 33] == "NY")
+ok("addr_source records which was used",
+   pd$addr_source[pd$npi == 31] == "practice" && pd$addr_source[pd$npi == 32] == "mailing")
+ok("output is partitioned year=/state=",
+   all(c("year","state") %in% names(pd)) &&
+     dir.exists(file.path("phys_yr", "year=2018", "state=CT")))
+ok("distinct in npi", nrow(pd) == n_distinct(pd$npi))
+ok("leading zeros survive the read (06510, not 6510)",
+   pd$zip[pd$npi == 31] == "06510" && pd$zip[pd$npi == 32] == "02901")
 
 ## ------------------------------------------------------------- NPPES URLs
 ## Table logic only -- no network. The URLs themselves were verified by hand against NBER;

@@ -105,6 +105,11 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
 
 #' Read a downloaded NPPES core file, whichever format it is in
 #'
+#' @description ZIP columns are forced to string. Left to type inference a CSV ZIP becomes
+#' an integer and loses its leading zero -- `06510` reads back as `6510` -- which then fails
+#' every ZCTA centroid lookup, silently, since the centroid table is zero-padded. Only the
+#' ZIP columns need pinning; everything else infers fine.
+#'
 #' @param path path returned by `download_nppes_core()`
 #'
 #' @return an arrow Dataset
@@ -112,6 +117,10 @@ read_nppes_core <- function(path) {
   if (tools::file_ext(path) == "parquet") {
     arrow::open_dataset(path)
   } else {
-    arrow::open_dataset(path, format = "csv")
+    arrow::open_dataset(
+      path,
+      format = "csv",
+      col_types = arrow::schema(ploczip = arrow::string(), pmailzip = arrow::string())
+    )
   }
 }
