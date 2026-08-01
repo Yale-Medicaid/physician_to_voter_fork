@@ -60,7 +60,8 @@ check_for_distinct_result <- function(out_pth, distinct_col) {
       FALSE,
       msg = cli::format_error(c(
         "Result must be distinct in {.var {distinct_col}}",
-        "x" = "Result has {.pkg {scales::comma(n_rows)}} rows but only {.pkg {scales::comma(n_distinct)}} distinct combination{?s}",
+        "x" = paste("Result has {.pkg {scales::comma(n_rows)}} rows but only",
+                    "{.pkg {scales::comma(n_distinct)}} distinct combination{?s}"),
         ">" = "{.file {out_pth}}"
       ))
     ))

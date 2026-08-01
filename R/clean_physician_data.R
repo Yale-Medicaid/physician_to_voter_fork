@@ -28,58 +28,58 @@
 #'
 #' @return `out_pth` -- one row per NPI, asserted distinct
 clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc_file, year,
-																 out_pth = "trunk/derived/physician_data/year={year}") {
-	out_pth <- glue::glue(out_pth)
-	unlink(out_pth, recursive = TRUE)
+                                 out_pth = "trunk/derived/physician_data/year={year}") {
+  out_pth <- glue::glue(out_pth)
+  unlink(out_pth, recursive = TRUE)
 
-	# An NPI carrying more than one (grd_yr, med_sch) combination is dropped entirely --
-	# there is no principled way to choose, and keeping one would fan that physician out
-	# through every downstream join. count_cms_npi_conflicts() reports the cost.
-	cms_raw <- read_csv(cms_file, show_col_types = FALSE) %>%
-		rename_with(tolower) %>%
-		select(npi, grd_yr, med_sch) %>%
-		distinct()
+  # An NPI carrying more than one (grd_yr, med_sch) combination is dropped entirely --
+  # there is no principled way to choose, and keeping one would fan that physician out
+  # through every downstream join. count_cms_npi_conflicts() reports the cost.
+  cms_raw <- readr::read_csv(cms_file, show_col_types = FALSE) |>
+    dplyr::rename_with(tolower) |>
+    dplyr::select(npi, grd_yr, med_sch) |>
+    dplyr::distinct()
 
-	conflicted_npi <- cms_raw %>%
-		count(npi) %>%
-		filter(n > 1) %>%
-		select(npi)
+  conflicted_npi <- cms_raw |>
+    dplyr::count(npi) |>
+    dplyr::filter(n > 1) |>
+    dplyr::select(npi)
 
-	cms_data <- anti_join(cms_raw, conflicted_npi, by = "npi")
+  cms_data <- dplyr::anti_join(cms_raw, conflicted_npi, by = dplyr::join_by(npi))
 
-	taxonomy <- read_taxonomy_union(taxonomy_files)
+  taxonomy <- read_taxonomy_union(taxonomy_files)
 
-	nucc_data <- read_csv(nucc_file, show_col_types = FALSE) %>%
-		rename_with(~tolower(gsub(" ", "_", .x)))
+  nucc_data <- readr::read_csv(nucc_file, show_col_types = FALSE) |>
+    dplyr::rename_with(~tolower(gsub(" ", "_", .x)))
 
-	providers <- read_nppes_core(nppes_core_file) %>%
-		select(npi, entity, pfname, pmname, plname,
-					 plocstatename, ploczip, pmailstatename, pmailzip) %>%
-		# entity 1 is an individual; 2 is an organisation
-		filter(entity == 1) %>%
-		collect() %>%
-		mutate(
-			# practice location, falling back to mailing where practice is absent
-			addr_source = if_else(!is.na(plocstatename) & plocstatename != "",
-														"practice", "mailing"),
-			state = if_else(addr_source == "practice", plocstatename, pmailstatename),
-			zip   = if_else(addr_source == "practice", ploczip, pmailzip)
-		) %>%
-		select(npi, provider_first_name = pfname, provider_middle_name = pmname,
-					 provider_last_name = plname, state, zip, addr_source)
+  providers <- read_nppes_core(nppes_core_file) |>
+    dplyr::select(npi, entity, pfname, pmname, plname,
+                  plocstatename, ploczip, pmailstatename, pmailzip) |>
+    # entity 1 is an individual; 2 is an organisation
+    dplyr::filter(entity == 1) |>
+    dplyr::collect() |>
+    dplyr::mutate(
+      # practice location, falling back to mailing where practice is absent
+      addr_source = dplyr::if_else(!is.na(plocstatename) & plocstatename != "",
+                                   "practice", "mailing"),
+      state = dplyr::if_else(addr_source == "practice", plocstatename, pmailstatename),
+      zip = dplyr::if_else(addr_source == "practice", ploczip, pmailzip)
+    ) |>
+    dplyr::select(npi, provider_first_name = pfname, provider_middle_name = pmname,
+                  provider_last_name = plname, state, zip, addr_source)
 
-	full_data <- providers %>%
-		mutate(npi = as.numeric(npi)) %>%
-		anti_join(conflicted_npi, by = "npi") %>%
-		left_join(taxonomy, by = "npi") %>%
-		left_join(nucc_data, by = c("taxonomy_code" = "code")) %>%
-		left_join(cms_data, by = "npi") %>%
-		filter(grouping == "Allopathic & Osteopathic Physicians") %>%
-		mutate(year = as.integer(year))
+  full_data <- providers |>
+    dplyr::mutate(npi = as.numeric(npi)) |>
+    dplyr::anti_join(conflicted_npi, by = dplyr::join_by(npi)) |>
+    dplyr::left_join(taxonomy, by = dplyr::join_by(npi)) |>
+    dplyr::left_join(nucc_data, by = dplyr::join_by(taxonomy_code == code)) |>
+    dplyr::left_join(cms_data, by = dplyr::join_by(npi)) |>
+    dplyr::filter(grouping == "Allopathic & Osteopathic Physicians") |>
+    dplyr::mutate(year = as.integer(year))
 
-	write_dataset(full_data, out_pth, partitioning = "state")
+  arrow::write_dataset(full_data, out_pth, partitioning = "state")
 
-	return_out_pth_check_distinct(out_pth, distinct_col = "npi")
+  return_out_pth_check_distinct(out_pth, distinct_col = "npi")
 }
 
 
@@ -94,24 +94,24 @@ clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc
 #'
 #' @return a one-row tibble of counts and shares
 count_cms_npi_conflicts <- function(cms_file) {
-	read_csv(cms_file, show_col_types = FALSE) %>%
-		rename_with(tolower) %>%
-		select(npi, grd_yr, med_sch) %>%
-		distinct() %>%
-		group_by(npi) %>%
-		summarize(
-			n_rows = n(),
-			n_grd_yr = n_distinct(grd_yr),
-			n_med_sch = n_distinct(med_sch),
-			.groups = "drop"
-		) %>%
-		summarize(
-			n_npi = n(),
-			n_conflicting = sum(n_rows > 1),
-			pct_conflicting = n_conflicting / n_npi,
-			max_rows_per_npi = max(n_rows),
-			n_grd_yr_only = sum(n_rows > 1 & n_grd_yr > 1 & n_med_sch == 1),
-			n_med_sch_only = sum(n_rows > 1 & n_grd_yr == 1 & n_med_sch > 1),
-			n_both = sum(n_rows > 1 & n_grd_yr > 1 & n_med_sch > 1)
-		)
+  readr::read_csv(cms_file, show_col_types = FALSE) |>
+    dplyr::rename_with(tolower) |>
+    dplyr::select(npi, grd_yr, med_sch) |>
+    dplyr::distinct() |>
+    dplyr::group_by(npi) |>
+    dplyr::summarize(
+      n_rows = n(),
+      n_grd_yr = dplyr::n_distinct(grd_yr),
+      n_med_sch = dplyr::n_distinct(med_sch),
+      .groups = "drop"
+    ) |>
+    dplyr::summarize(
+      n_npi = n(),
+      n_conflicting = sum(n_rows > 1),
+      pct_conflicting = n_conflicting/n_npi,
+      max_rows_per_npi = max(n_rows),
+      n_grd_yr_only = sum(n_rows > 1 & n_grd_yr > 1 & n_med_sch == 1),
+      n_med_sch_only = sum(n_rows > 1 & n_grd_yr == 1 & n_med_sch > 1),
+      n_both = sum(n_rows > 1 & n_grd_yr > 1 & n_med_sch > 1)
+    )
 }

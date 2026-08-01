@@ -24,37 +24,37 @@
 #' @return a numeric predictor matrix
 #'
 make_X_matrix <- function(df) {
-	df %>%
-		mutate(
-			# Occupation enters as TWO indicators, not one. A lone
-			# grepl("Medical", ...) flag would fold missing and "Unknown" occupations
-			# in with genuinely non-medical ones, because grepl() returns FALSE for
-			# NA -- so a voter whose occupation is simply unrecorded would score as
-			# evidence against a match, identically to one recorded as "Educator".
-			# That distinction matters here because L2's commercial occupation data
-			# is sparse, so "unknown" is a common and quite different state from
-			# "known, and not medical".
-			#
-			# Computed from CommercialData_Occupation directly rather than reusing
-			# the `medical` / `na_medical` columns that locality_sensitive_hash()
-			# also derives, so this only depends on the raw field being present.
-			occ_medical = grepl("Medical", CommercialData_Occupation, ignore.case = TRUE),
-			occ_unknown = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown"
-		) %>%
-		select(zip_dist, year_dist, full_name_sim, mid_initial_agree, mid_name_agree, n,
-					 occ_medical, occ_unknown) %>%
-		# Coerce logicals to 0/1 rather than letting model.matrix expand them. Under
-		# `~ -1 + .` a logical yields both a ...FALSE and a ...TRUE dummy, so
-		# selecting 6 columns emitted a 7-column matrix with a perfectly
-		# complementary, redundant pair.
-		#
-		# This is cosmetic, not a fix: logicals have a fixed {FALSE, TRUE} domain, so
-		# the width was stable at 7 regardless of the data, and grf's default mtry is
-		# min(ceiling(sqrt(p) + 20), p), which equals p at this size -- so the extra
-		# column changed neither the column count across calls nor the feature
-		# sampling. 6 columns for 6 features is simply easier to reason about.
-		mutate(across(where(is.logical), as.integer)) %>%
-		as.matrix()
+  df |>
+    dplyr::mutate(
+      # Occupation enters as TWO indicators, not one. A lone
+      # grepl("Medical", ...) flag would fold missing and "Unknown" occupations
+      # in with genuinely non-medical ones, because grepl() returns FALSE for
+      # NA -- so a voter whose occupation is simply unrecorded would score as
+      # evidence against a match, identically to one recorded as "Educator".
+      # That distinction matters here because L2's commercial occupation data
+      # is sparse, so "unknown" is a common and quite different state from
+      # "known, and not medical".
+      #
+      # Computed from CommercialData_Occupation directly rather than reusing
+      # the `medical` / `na_medical` columns that locality_sensitive_hash()
+      # also derives, so this only depends on the raw field being present.
+      occ_medical = grepl("Medical", CommercialData_Occupation, ignore.case = TRUE),
+      occ_unknown = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown"
+    ) |>
+    dplyr::select(zip_dist, year_dist, full_name_sim, mid_initial_agree,
+                  mid_name_agree, n, occ_medical, occ_unknown) |>
+    # Coerce logicals to 0/1 rather than letting model.matrix expand them. Under
+    # `~ -1 + .` a logical yields both a ...FALSE and a ...TRUE dummy, so
+    # selecting 6 columns emitted a 7-column matrix with a perfectly
+    # complementary, redundant pair.
+    #
+    # This is cosmetic, not a fix: logicals have a fixed {FALSE, TRUE} domain, so
+    # the width was stable at 7 regardless of the data, and grf's default mtry is
+    # min(ceiling(sqrt(p) + 20), p), which equals p at this size -- so the extra
+    # column changed neither the column count across calls nor the feature
+    # sampling. 6 columns for 6 features is simply easier to reason about.
+    dplyr::mutate(dplyr::across(where(is.logical), as.integer)) |>
+    as.matrix()
 }
 
 
@@ -69,12 +69,12 @@ make_X_matrix <- function(df) {
 #'
 #' @return a `grf::probability_forest` fit. Small enough to stay an in-memory target.
 train_rf_model <- function(labelled_training_files) {
-	labelled_training_data <- labelled_training_files %>%
-		map(read_parquet) %>%
-		list_rbind()
+  labelled_training_data <- labelled_training_files |>
+    purrr::map(read_parquet) |>
+    purrr::list_rbind()
 
-	probability_forest(make_X_matrix(labelled_training_data),
-										 as.factor(labelled_training_data$match))
+  grf::probability_forest(make_X_matrix(labelled_training_data),
+                          as.factor(labelled_training_data$match))
 }
 
 
@@ -101,44 +101,46 @@ train_rf_model <- function(labelled_training_files) {
 #' @return `out_pth` -- the year's pairs with a `match_prob` column. Named `match_prob`,
 #'   not `match`, so it cannot be confused with the training *label* column of that name.
 score_pairs <- function(lsh_pairs, cross_border_pairs, rf_model, this_year,
-												out_pth = "trunk/derived/scored_pairs/year={this_year}") {
-	if (rlang::is_empty(lsh_pairs) && rlang::is_empty(cross_border_pairs)) {
-		return(NULL)
-	}
+                        out_pth = "trunk/derived/scored_pairs/year={this_year}") {
+  if (rlang::is_empty(lsh_pairs) && rlang::is_empty(cross_border_pairs)) {
+    return(NULL)
+  }
 
-	out_pth <- glue::glue(out_pth)
-	unlink(out_pth, recursive = TRUE)
+  out_pth <- glue::glue(out_pth)
+  unlink(out_pth, recursive = TRUE)
 
-	# Recover each pass's partitioned root from its branch paths so the hive year/state
-	# columns come back; opening the leaf paths individually would lose them.
-	roots <- c(
-		if (rlang::is_empty(lsh_pairs)) NULL else unique(dirname(dirname(lsh_pairs))),
-		if (rlang::is_empty(cross_border_pairs)) NULL else unique(dirname(dirname(cross_border_pairs)))
-	)
+  # Recover each pass's partitioned root from its branch paths so the hive year/state
+  # columns come back; opening the leaf paths individually would lose them.
+  roots <- c(
+    if (rlang::is_empty(lsh_pairs)) NULL else unique(dirname(dirname(lsh_pairs))),
+    if (rlang::is_empty(cross_border_pairs)) NULL else unique(dirname(dirname(cross_border_pairs)))
+  )
 
-	pairs <- roots %>%
-		map(\(r) open_dataset(r) %>% filter(year == this_year) %>% collect()) %>%
-		list_rbind()
+  pairs <- roots |>
+    purrr::map(\(r) arrow::open_dataset(r) |>
+                 dplyr::filter(year == this_year) |>
+                 dplyr::collect()) |>
+    purrr::list_rbind()
 
-	if (nrow(pairs) == 0) {
-		return(NULL)
-	}
+  if (nrow(pairs) == 0) {
+    return(NULL)
+  }
 
-	pairs <- pairs %>%
-		group_by(npi) %>%
-		mutate(n = n()) %>%
-		ungroup()
+  pairs <- pairs |>
+    dplyr::group_by(npi) |>
+    dplyr::mutate(n = n()) |>
+    dplyr::ungroup()
 
-	pairs$match_prob <- predict(rf_model, newdata = make_X_matrix(pairs))$predictions[,2]
+  pairs$match_prob <- predict(rf_model, newdata = make_X_matrix(pairs))$predictions[, 2]
 
-	# Drop the redundant `year` column before writing. out_pth is itself a `year=` hive
-	# directory, so keeping the column means a re-read sees `year` from two sources -- and
-	# arrow refuses to merge them if the types differ at all ("Field year has incompatible
-	# types: double vs int32"). Letting the partition key be the single source removes the
-	# whole class of failure. `state` is kept: it is a plain column here, not a key.
-	pairs %>%
-		select(-any_of("year")) %>%
-		write_dataset(out_pth)
+  # Drop the redundant `year` column before writing. out_pth is itself a `year=` hive
+  # directory, so keeping the column means a re-read sees `year` from two sources -- and
+  # arrow refuses to merge them if the types differ at all ("Field year has incompatible
+  # types: double vs int32"). Letting the partition key be the single source removes the
+  # whole class of failure. `state` is kept: it is a plain column here, not a key.
+  pairs |>
+    dplyr::select(-dplyr::any_of("year")) |>
+    arrow::write_dataset(out_pth)
 
-	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
+  return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }

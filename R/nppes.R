@@ -32,17 +32,17 @@
 #' @return a one-row tibble of `year`, `month`, `format`, `url`
 nppes_core_url <- function(year) {
   urls <- tibble::tribble(
-    ~"year", ~"month", ~"format",  ~"url",
-    2018L,   12L,      "csv",      "https://data.nber.org/npi/2018/core201812.csv",
-    2019L,   12L,      "parquet",  "https://data.nber.org/npi/2019/12/core_201912.parquet",
-    2020L,   12L,      "parquet",  "https://data.nber.org/npi/2020/csv/core202012.parquet",
-    2021L,   12L,      "parquet",  "https://data.nber.org/npi/2021/csv/core202112.parquet",
-    2022L,   12L,      "parquet",  "https://data.nber.org/npi/2022/csv/core202212.parquet",
+    ~ "year", ~ "month", ~ "format", ~ "url",
+    2018L, 12L, "csv", "https://data.nber.org/npi/2018/core201812.csv",
+    2019L, 12L, "parquet", "https://data.nber.org/npi/2019/12/core_201912.parquet",
+    2020L, 12L, "parquet", "https://data.nber.org/npi/2020/csv/core202012.parquet",
+    2021L, 12L, "parquet", "https://data.nber.org/npi/2021/csv/core202112.parquet",
+    2022L, 12L, "parquet", "https://data.nber.org/npi/2022/csv/core202212.parquet",
     # 2023 stops at May, and the May file is CSV only -- the April file has parquet but is
     # an earlier vintage, and latest-available wins.
-    2023L,    5L,      "csv",      "https://data.nber.org/npi/2023/5/core_20235.csv",
-    2024L,   12L,      "parquet",  "https://data.nber.org/npi/2024/12/core_202412.parquet",
-    2025L,   12L,      "parquet",  "https://data.nber.org/npi/2025/12/core_202512.parquet"
+    2023L, 5L, "csv", "https://data.nber.org/npi/2023/5/core_20235.csv",
+    2024L, 12L, "parquet", "https://data.nber.org/npi/2024/12/core_202412.parquet",
+    2025L, 12L, "parquet", "https://data.nber.org/npi/2025/12/core_202512.parquet"
   )
 
   # !! not {{ }}: the embrace injects the argument *expression*, so a caller doing
@@ -108,11 +108,11 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
 #' @return a tibble of `vintage`, `url`, newest first
 nppes_taxonomy_urls <- function() {
   tibble::tribble(
-    ~"vintage",  ~"url",
-    "2025-12",   "https://data.nber.org/npi/2025/12/byvar/PTAXCODE_202512.parquet",
-    "2024-12",   "https://data.nber.org/npi/2024/12/byvar/PTAXCODE_202412.parquet",
-    "2023-05",   "https://data.nber.org/npi/2023/5/ptaxcode_20235.csv",
-    "2019-12",   "https://data.nber.org/npi/2019/12/byvar/PTAXCODE_201912.parquet"
+    ~ "vintage", ~ "url",
+    "2025-12", "https://data.nber.org/npi/2025/12/byvar/PTAXCODE_202512.parquet",
+    "2024-12", "https://data.nber.org/npi/2024/12/byvar/PTAXCODE_202412.parquet",
+    "2023-05", "https://data.nber.org/npi/2023/5/ptaxcode_20235.csv",
+    "2019-12", "https://data.nber.org/npi/2019/12/byvar/PTAXCODE_201912.parquet"
   )
 }
 
@@ -147,7 +147,7 @@ read_taxonomy_union <- function(paths) {
     dplyr::arrange(dplyr::desc(vintage))
 
   ordered <- tibble::tibble(path = paths, file = basename(paths)) |>
-    dplyr::inner_join(order, by = "file") |>
+    dplyr::inner_join(order, by = dplyr::join_by(file)) |>
     dplyr::arrange(dplyr::desc(vintage)) |>
     dplyr::pull(path)
 
@@ -223,10 +223,9 @@ read_nppes_core <- function(path) {
   if (tools::file_ext(path) == "parquet") {
     arrow::open_dataset(path)
   } else {
-    arrow::open_dataset(
-      path,
-      format = "csv",
-      col_types = arrow::schema(ploczip = arrow::string(), pmailzip = arrow::string())
-    )
+    arrow::open_dataset(path,
+                        format = "csv",
+                        col_types = arrow::schema(ploczip = arrow::string(),
+                                                  pmailzip = arrow::string()))
   }
 }

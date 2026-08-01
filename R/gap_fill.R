@@ -66,8 +66,8 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
   # is an integer, and join_by would not match across the two.
   l2_present <- tibble::tibble(
     state = get_l2_state(l2_extracts),
-    year  = as.integer(get_l2_year(l2_extracts)),
-    l2    = TRUE
+    year = as.integer(get_l2_year(l2_extracts)),
+    l2 = TRUE
   ) |>
     dplyr::distinct()
 
@@ -75,19 +75,18 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
   # the universe to recover the practice state of each anchor year.
   anchor_rows <- matched |>
     dplyr::filter(!is.na(match_prob), match_prob >= min_fill_prob) |>
-    dplyr::left_join(
-      dplyr::select(universe, npi, year, anchor_state = state),
-      by = dplyr::join_by(npi, year)
-    )
+    dplyr::left_join(universe |>
+                       dplyr::select(npi, year, anchor_state = state),
+                     by = dplyr::join_by(npi, year))
 
   anchor_summary <- anchor_rows |>
     dplyr::group_by(npi) |>
     dplyr::summarize(
-      n_anchor_years  = dplyr::n_distinct(year),
+      n_anchor_years = dplyr::n_distinct(year),
       n_anchor_voters = dplyr::n_distinct(LALVOTERID),
       n_anchor_states = dplyr::n_distinct(anchor_state),
       # only meaningful when n_anchor_states == 1, which state_stable requires
-      anchor_state    = dplyr::first(anchor_state),
+      anchor_state = dplyr::first(anchor_state),
       .groups = "drop"
     )
 
@@ -99,10 +98,10 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
     dplyr::slice_head(n = 1) |>
     dplyr::ungroup() |>
     dplyr::select(npi,
-                  fill_LALVOTERID   = LALVOTERID,
+                  fill_LALVOTERID = LALVOTERID,
                   anchor_match_prob = match_prob,
-                  anchor_zip_dist   = zip_dist,
-                  anchor_year       = year)
+                  anchor_zip_dist = zip_dist,
+                  anchor_year = year)
 
   universe |>
     dplyr::anti_join(matched, by = dplyr::join_by(npi, year)) |>
@@ -110,19 +109,19 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
     dplyr::left_join(best_anchor, by = dplyr::join_by(npi)) |>
     dplyr::left_join(l2_present, by = dplyr::join_by(state, year)) |>
     dplyr::mutate(
-      l2_present   = !is.na(l2),
-      has_anchor   = !is.na(fill_LALVOTERID),
-      unambiguous  = !is.na(n_anchor_voters) & n_anchor_voters == 1,
+      l2_present = !is.na(l2),
+      has_anchor = !is.na(fill_LALVOTERID),
+      unambiguous = !is.na(n_anchor_voters) & n_anchor_voters == 1,
       # guard anchor_state explicitly: n_distinct() counts NA as a value, so an anchor year
       # missing from the universe would otherwise pass as a single "state"
       state_stable = !is.na(n_anchor_states) & n_anchor_states == 1 &
         !is.na(anchor_state) & anchor_state == state,
-      near         = !is.na(anchor_zip_dist) & anchor_zip_dist <= max_fill_zip_dist,
-      fillable     = has_anchor & unambiguous & state_stable & near,
-      fill_tier    = dplyr::case_when(
+      near = !is.na(anchor_zip_dist) & anchor_zip_dist <= max_fill_zip_dist,
+      fillable = has_anchor & unambiguous & state_stable & near,
+      fill_tier = dplyr::case_when(
         fillable & !l2_present ~ 1L,
         fillable               ~ 2L,
-        .default               = 3L
+        .default = 3L
       )
     ) |>
     dplyr::select(-l2) |>
@@ -190,14 +189,14 @@ fill_panel_gaps <- function(panel, physician_data, l2_extracts,
     dplyr::transmute(
       npi,
       year,
-      LALVOTERID    = fill_LALVOTERID,
-      match_prob    = NA_real_,
-      state_agree   = NA,
-      zip_dist      = NA_real_,
+      LALVOTERID = fill_LALVOTERID,
+      match_prob = NA_real_,
+      state_agree = NA,
+      zip_dist = NA_real_,
       full_name_sim = NA_real_,
-      n             = NA_integer_,
-      tied          = NA,
-      filled        = TRUE,
+      n = NA_integer_,
+      tied = NA,
+      filled = TRUE,
       fill_tier
     )
 
@@ -236,22 +235,22 @@ summarize_panel_gaps <- function(panel, physician_data, l2_extracts,
                       min_fill_prob = min_fill_prob,
                       max_fill_zip_dist = max_fill_zip_dist) |>
     dplyr::summarize(
-      n_gaps            = dplyr::n(),
-      n_npi_with_gap    = dplyr::n_distinct(npi),
-      n_tier_1          = sum(fill_tier == 1L),
-      n_tier_2          = sum(fill_tier == 2L),
-      n_tier_3          = sum(fill_tier == 3L),
+      n_gaps = dplyr::n(),
+      n_npi_with_gap = dplyr::n_distinct(npi),
+      n_tier_1 = sum(fill_tier == 1L),
+      n_tier_2 = sum(fill_tier == 2L),
+      n_tier_3 = sum(fill_tier == 3L),
       # why the unfilled ones failed; these overlap
-      n_fail_no_anchor  = sum(fill_tier == 3L & !has_anchor),
-      n_fail_ambiguous  = sum(fill_tier == 3L & has_anchor & !unambiguous),
-      n_fail_moved      = sum(fill_tier == 3L & has_anchor & !state_stable),
+      n_fail_no_anchor = sum(fill_tier == 3L & !has_anchor),
+      n_fail_ambiguous = sum(fill_tier == 3L & has_anchor & !unambiguous),
+      n_fail_moved = sum(fill_tier == 3L & has_anchor & !state_stable),
       # `near` fails two ways, and they are different stories: a genuinely distant anchor
       # is a plausibility problem, a missing zip_dist is a ZCTA coverage one (PO-box-only
       # ZIPs have no centroid). Reported apart so the second is not read as the first.
-      n_fail_far        = sum(fill_tier == 3L & has_anchor & !is.na(anchor_zip_dist) &
+      n_fail_far = sum(fill_tier == 3L & has_anchor & !is.na(anchor_zip_dist) &
                                anchor_zip_dist > max_fill_zip_dist),
-      n_fail_no_zip     = sum(fill_tier == 3L & has_anchor & is.na(anchor_zip_dist)),
+      n_fail_no_zip = sum(fill_tier == 3L & has_anchor & is.na(anchor_zip_dist)),
       # structural absence that could not be filled anyway
-      n_no_l2_unfilled  = sum(fill_tier == 3L & !l2_present)
+      n_no_l2_unfilled = sum(fill_tier == 3L & !l2_present)
     )
 }

@@ -6,45 +6,45 @@
 #'
 #' @return character vector of column names
 l2_match_columns <- function() {
-	yale_schema <- c(
-		CommercialData_Occupation = "c",
-		CommercialData_OccupationGroup = "c",
-		CommercialData_OccupationIndustry = "c",
-		County = "c",
-		EthnicGroups_EthnicGroup1Desc = "c",
-		Ethnic_Description = "c",
-		FECDonors_AvgDonation = "n",
-		FECDonors_AvgDonation_Range = "c",
-		FECDonors_LastDonationDate = "c",
-		FECDonors_NumberOfDonations = "n",
-		FECDonors_PrimaryRecipientOfContributions = "c",
-		FECDonors_TotalDonationsAmount = "n",
-		FECDonors_TotalDonationsAmt_Range = "c",
-		Parties_Description = "c",
-		Residence_Addresses_CensusTract	= "c",
-		Voters_Age = "n",
-		Voters_BirthDate = "c",
-		Voters_Gender = "c"
-	)
+  yale_schema <- c(
+    CommercialData_Occupation = "c",
+    CommercialData_OccupationGroup = "c",
+    CommercialData_OccupationIndustry = "c",
+    County = "c",
+    EthnicGroups_EthnicGroup1Desc = "c",
+    Ethnic_Description = "c",
+    FECDonors_AvgDonation = "n",
+    FECDonors_AvgDonation_Range = "c",
+    FECDonors_LastDonationDate = "c",
+    FECDonors_NumberOfDonations = "n",
+    FECDonors_PrimaryRecipientOfContributions = "c",
+    FECDonors_TotalDonationsAmount = "n",
+    FECDonors_TotalDonationsAmt_Range = "c",
+    Parties_Description = "c",
+    Residence_Addresses_CensusTract = "c",
+    Voters_Age = "n",
+    Voters_BirthDate = "c",
+    Voters_Gender = "c"
+  )
 
-	datavant_schema <- c(
-		Residence_Addresses_State = "c",
-		Residence_Addresses_Zip = "c",
-		Residence_Addresses_ZipPlus4 = "c",
-		CommercialData_Education = "c",
-		CommercialData_EstHomeValue = "c",
-		CommercialData_HomePurchasePrice = "c",
-		CommercialData_EstimatedHHIncome = "c",
-		Voters_Age = "n",
-		Voters_BirthDate = "c",
-		Voters_FirstName = "c",
-		Voters_Gender = "c",
-		Voters_LastName = "c",
-		Voters_MiddleName = "c",
-		Voters_NameSuffix = "c"
-	)
+  datavant_schema <- c(
+    Residence_Addresses_State = "c",
+    Residence_Addresses_Zip = "c",
+    Residence_Addresses_ZipPlus4 = "c",
+    CommercialData_Education = "c",
+    CommercialData_EstHomeValue = "c",
+    CommercialData_HomePurchasePrice = "c",
+    CommercialData_EstimatedHHIncome = "c",
+    Voters_Age = "n",
+    Voters_BirthDate = "c",
+    Voters_FirstName = "c",
+    Voters_Gender = "c",
+    Voters_LastName = "c",
+    Voters_MiddleName = "c",
+    Voters_NameSuffix = "c"
+  )
 
-	names(c(LALVOTERID = "c", yale_schema, datavant_schema))
+  names(c(LALVOTERID = "c", yale_schema, datavant_schema))
 }
 
 
@@ -58,22 +58,24 @@ l2_match_columns <- function() {
 #'
 #' @return the frame with match columns added and the long NPPES names shortened
 prepare_physicians <- function(phys) {
-	phys %>%
-		mutate(
-			# coalesce the middle name, matching the voter side. Unguarded, paste0 renders a
-			# missing middle name as the literal string "NA" and splices it into the name
-			# being compared, pushing otherwise-perfect matches below the LSH threshold.
-			full_name = tolower(paste0(provider_first_name, coalesce(provider_middle_name, ""), provider_last_name)),
-			full_name_no_mid = tolower(paste0(provider_first_name, provider_last_name)),
-			st = tolower(coalesce(state, "")),
-			# middle initial alone; state is handled by the partition
-			mi = tolower(coalesce(substr(provider_middle_name, 1, 1), ""))
-		) %>%
-		rename(
-			frst_nm = provider_first_name,
-			mid_nm = provider_middle_name,
-			last_nm = provider_last_name
-		)
+  phys |>
+    dplyr::mutate(
+      # coalesce the middle name, matching the voter side. Unguarded, paste0 renders a
+      # missing middle name as the literal string "NA" and splices it into the name
+      # being compared, pushing otherwise-perfect matches below the LSH threshold.
+      full_name = tolower(paste0(provider_first_name,
+                                 dplyr::coalesce(provider_middle_name, ""),
+                                 provider_last_name)),
+      full_name_no_mid = tolower(paste0(provider_first_name, provider_last_name)),
+      st = tolower(dplyr::coalesce(state, "")),
+      # middle initial alone; state is handled by the partition
+      mi = tolower(dplyr::coalesce(substr(provider_middle_name, 1, 1), ""))
+    ) |>
+    dplyr::rename(
+      frst_nm = provider_first_name,
+      mid_nm = provider_middle_name,
+      last_nm = provider_last_name
+    )
 }
 
 
@@ -94,25 +96,29 @@ prepare_physicians <- function(phys) {
 #'
 #' @return a collected voter frame with match columns added
 read_l2_partition <- function(l2_extract) {
-	occ_col <- l2_occupation_col(get_l2_year(l2_extract))
+  occ_col <- l2_occupation_col(get_l2_year(l2_extract))
 
-	open_dataset(l2_extract) %>%
-		select(LALVOTERID, contains("Voters_"),
-					 Residence_Addresses_Zip, Residence_Addresses_State,
-					 Residence_Addresses_City, contains("Occupation"),
-					 any_of(l2_match_columns())
-					 ) %>%
-		rename(CommercialData_Occupation = any_of(occ_col)) %>%
-		mutate(
-			full_name = tolower(paste0(Voters_FirstName, coalesce(Voters_MiddleName, ""), Voters_LastName)),
-			full_name_no_mid_l2 = tolower(paste0(Voters_FirstName, Voters_LastName)),
-			st = coalesce(tolower(Residence_Addresses_State), ""),
-			mi = tolower(coalesce(substr(Voters_MiddleName, 1, 1), "")),
-			medical = grepl("Medical", CommercialData_Occupation, ignore.case = T),
-			na_medical = is.na(CommercialData_Occupation) | CommercialData_Occupation == "Unknown",
-			medical_sub = ifelse(grepl("Medical", CommercialData_Occupation, ignore.case = T), CommercialData_Occupation, "None")
-		) %>%
-		collect()
+  arrow::open_dataset(l2_extract) |>
+    dplyr::select(LALVOTERID, dplyr::contains("Voters_"),
+                  Residence_Addresses_Zip, Residence_Addresses_State,
+                  Residence_Addresses_City, dplyr::contains("Occupation"),
+                  dplyr::any_of(l2_match_columns())) |>
+    dplyr::rename(CommercialData_Occupation = dplyr::any_of(occ_col)) |>
+    dplyr::mutate(
+      full_name = tolower(paste0(Voters_FirstName,
+                                 dplyr::coalesce(Voters_MiddleName, ""),
+                                 Voters_LastName)),
+      full_name_no_mid_l2 = tolower(paste0(Voters_FirstName, Voters_LastName)),
+      st = dplyr::coalesce(tolower(Residence_Addresses_State), ""),
+      mi = tolower(dplyr::coalesce(substr(Voters_MiddleName, 1, 1), "")),
+      medical = grepl("Medical", CommercialData_Occupation, ignore.case = TRUE),
+      na_medical = is.na(CommercialData_Occupation) |
+        CommercialData_Occupation == "Unknown",
+      medical_sub = ifelse(grepl("Medical", CommercialData_Occupation,
+                                 ignore.case = TRUE),
+                           CommercialData_Occupation, "None")
+    ) |>
+    dplyr::collect()
 }
 
 
@@ -132,115 +138,126 @@ read_l2_partition <- function(l2_extract) {
 #' @return a frame of candidate pairs with comparison features, or `NULL` if either side is
 #'   empty or no pairs were found
 match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
-												n_gram_width = 3, band_width = 7,
-												n_bands = 400, threshold = 0.7) {
-	if (nrow(phys_data) == 0 || nrow(voter_dataset) == 0) {
-		return(NULL)
-	}
+                        n_gram_width = 3, band_width = 7,
+                        n_bands = 400, threshold = 0.7) {
+  if (nrow(phys_data) == 0 || nrow(voter_dataset) == 0) {
+    return(NULL)
+  }
 
-	# Full name, no blocking -- the caller has already scoped this to a single partition,
-	# so state blocking would be redundant. `by` is still required though: omitting it
-	# errors with "'by_a' must be of length 1" on CRAN zoomerjoin.
-	join_out_1 <- jaccard_inner_join(phys_data, voter_dataset,
-																	 by = c("full_name" = "full_name"),
-																	 n_gram_width = n_gram_width, band_width = band_width,
-																	 n_bands = n_bands, threshold = threshold, clean = T, progress = T)
+  # Full name, no blocking -- the caller has already scoped this to a single partition,
+  # so state blocking would be redundant. `by` is still required though: omitting it
+  # errors with "'by_a' must be of length 1" on CRAN zoomerjoin.
+  join_out_1 <- zoomerjoin::jaccard_inner_join(phys_data, voter_dataset,
+                                               by = c("full_name" = "full_name"),
+                                               n_gram_width = n_gram_width,
+                                               band_width = band_width,
+                                               n_bands = n_bands,
+                                               threshold = threshold,
+                                               clean = TRUE, progress = TRUE)
 
-	# First + last name, blocked on middle initial. Blocking is still needed here even
-	# though state is handled by the partition: this join previously blocked on `st_mi`
-	# (state AND initial), so dropping block_by outright would also drop the
-	# middle-initial *agreement* requirement and start matching first+last across all
-	# middle initials. The post-filter below does not substitute for that -- it tests
-	# middle-name length, not agreement.
-	join_out_2 <- jaccard_inner_join(phys_data, voter_dataset,
-																	 by = c("full_name_no_mid" = "full_name_no_mid_l2"), block_by = "mi",
-																	 n_gram_width = n_gram_width, band_width = band_width,
-																	 n_bands = n_bands, threshold = threshold, clean = T, progress = T) %>%
-		# coalesce before nchar(): nchar(NA) is NA, NA <= 1 is NA, and filter() drops NA
-		# rows -- so a pair with no middle name on *either* side evaluated to NA | NA and
-		# was dropped, the opposite of this filter's intent.
-		filter(nchar(coalesce(Voters_MiddleName, "")) <= 1 | nchar(coalesce(mid_nm, "")) <= 1)
+  # First + last name, blocked on middle initial. Blocking is still needed here even
+  # though state is handled by the partition: this join previously blocked on `st_mi`
+  # (state AND initial), so dropping block_by outright would also drop the
+  # middle-initial *agreement* requirement and start matching first+last across all
+  # middle initials. The post-filter below does not substitute for that -- it tests
+  # middle-name length, not agreement.
+  join_out_2 <- zoomerjoin::jaccard_inner_join(phys_data, voter_dataset,
+                                               by = c("full_name_no_mid" =
+                                                        "full_name_no_mid_l2"),
+                                               block_by = "mi",
+                                               n_gram_width = n_gram_width,
+                                               band_width = band_width,
+                                               n_bands = n_bands,
+                                               threshold = threshold,
+                                               clean = TRUE, progress = TRUE) |>
+    # coalesce before nchar(): nchar(NA) is NA, NA <= 1 is NA, and filter() drops NA
+    # rows -- so a pair with no middle name on *either* side evaluated to NA | NA and
+    # was dropped, the opposite of this filter's intent.
+    dplyr::filter(nchar(dplyr::coalesce(Voters_MiddleName, "")) <= 1 |
+                    nchar(dplyr::coalesce(mid_nm, "")) <= 1)
 
-	join_out <- bind_rows(join_out_1, join_out_2) %>%
-		distinct()
+  join_out <- dplyr::bind_rows(join_out_1, join_out_2) |>
+    dplyr::distinct()
 
-	if (nrow(join_out) == 0) {
-		return(NULL)
-	}
+  if (nrow(join_out) == 0) {
+    return(NULL)
+  }
 
-	processed <- join_out %>%
-		mutate(
-			Voters_MiddleName = replace_na(Voters_MiddleName, ""),
-			mid_nm = replace_na(mid_nm, ""),
-			year_dist = grd_yr - year(Voters_BirthDate)
-		)
+  processed <- join_out |>
+    dplyr::mutate(
+      Voters_MiddleName = replace_na(Voters_MiddleName, ""),
+      mid_nm = replace_na(mid_nm, ""),
+      year_dist = grd_yr - year(Voters_BirthDate)
+    )
 
-	# ZIP-to-ZIP distance, computed from the NBER ZCTA centroid file rather than looked up
-	# in one of their pre-computed distance files.
-	#
-	# NBER's distance files are great-circle distances between exactly these Census
-	# internal points, so computing here reproduces their published numbers -- validated to
-	# a maximum absolute error of 0.000035 miles over 50,000 pairs from their 25-mile file.
-	#
-	# Why compute rather than look up:
-	#  1. No radius truncation. Every published distance file is capped, so pairs beyond
-	#     the cap are simply absent. Here every pair gets a real distance.
-	#  2. NA means one thing only -- "not a valid ZCTA". PO-box-only ZIPs have none.
-	#  3. No same-ZIP special case; the formula returns 0 for identical points.
-	#  4. 890 KB of input instead of ~0.5 GB or ~10 GB.
-	EARTH_RADIUS_MILES <- 6371 / 1.609344   # 6371 km -- the radius NBER's files match
+  # ZIP-to-ZIP distance, computed from the NBER ZCTA centroid file rather than looked up
+  # in one of their pre-computed distance files.
+  #
+  # NBER's distance files are great-circle distances between exactly these Census
+  # internal points, so computing here reproduces their published numbers -- validated to
+  # a maximum absolute error of 0.000035 miles over 50,000 pairs from their 25-mile file.
+  #
+  # Why compute rather than look up:
+  #  1. No radius truncation. Every published distance file is capped, so pairs beyond
+  #     the cap are simply absent. Here every pair gets a real distance.
+  #  2. NA means one thing only -- "not a valid ZCTA". PO-box-only ZIPs have none.
+  #  3. No same-ZIP special case; the formula returns 0 for identical points.
+  #  4. 890 KB of input instead of ~0.5 GB or ~10 GB.
+  EARTH_RADIUS_MILES <- 6371/1.609344   # 6371 km -- the radius NBER's files match
 
-	centroids <- arrow::open_dataset(
-			zip_centroid_file,
-			format = "csv",
-			# read the ZCTA as a string; inferred types would strip leading zeros
-			schema = arrow::schema(
-				zcta5 = arrow::string(),
-				intptlat = arrow::float64(),
-				intptlong = arrow::float64()
-			),
-			skip = 1
-		) %>%
-		collect()
+  centroids <- arrow::open_dataset(zip_centroid_file,
+                                   format = "csv",
+                                   # read the ZCTA as a string; inferred types would
+                                   # strip the leading zeros many ZIPs carry
+                                   schema = arrow::schema(zcta5 = arrow::string(),
+                                                          intptlat = arrow::float64(),
+                                                          intptlong = arrow::float64()),
+                                   skip = 1) |>
+    dplyr::collect()
 
-	haversine_miles <- function(lat1, lon1, lat2, lon2) {
-		rad <- pi / 180
-		a <- sin((lat2 - lat1) * rad / 2)^2 +
-			cos(lat1 * rad) * cos(lat2 * rad) * sin((lon2 - lon1) * rad / 2)^2
-		# clamp before asin(): floating point can nudge `a` a hair above 1
-		2 * EARTH_RADIUS_MILES * asin(sqrt(pmin(1, a)))
-	}
+  haversine_miles <- function(lat1, lon1, lat2, lon2) {
+    rad <- pi/180
+    a <- sin((lat2 - lat1)*rad/2)^2 +
+      cos(lat1*rad)*cos(lat2*rad)*sin((lon2 - lon1)*rad/2)^2
+    # clamp before asin(): floating point can nudge `a` a hair above 1
+    2*EARTH_RADIUS_MILES*asin(sqrt(pmin(1, a)))
+  }
 
-	# match() rather than a join: the centroid table is tiny but `processed` is not, and
-	# this avoids materialising four extra lat/long columns alongside it. An unmatched ZIP
-	# gives NA, which indexes to NA and propagates to NA distance.
-	i_phys  <- match(substr(processed$zip, 1, 5),                     centroids$zcta5)
-	i_voter <- match(substr(processed$Residence_Addresses_Zip, 1, 5), centroids$zcta5)
+  # match() rather than a join: the centroid table is tiny but `processed` is not, and
+  # this avoids materialising four extra lat/long columns alongside it. An unmatched ZIP
+  # gives NA, which indexes to NA and propagates to NA distance.
+  i_phys <- match(substr(processed$zip, 1, 5), centroids$zcta5)
+  i_voter <- match(substr(processed$Residence_Addresses_Zip, 1, 5), centroids$zcta5)
 
-	zip_dist_vec <- haversine_miles(
-		centroids$intptlat[i_phys],  centroids$intptlong[i_phys],
-		centroids$intptlat[i_voter], centroids$intptlong[i_voter]
-	)
+  zip_dist_vec <- haversine_miles(centroids$intptlat[i_phys],
+                                  centroids$intptlong[i_phys],
+                                  centroids$intptlat[i_voter],
+                                  centroids$intptlong[i_voter])
 
-	comparison_dataset <-
-		tibble(
-			# same n-gram width as the join that admitted the pair -- otherwise the gate
-			# would cut on one quantity and the model would score a different one
-			full_name_sim = jaccard_similarity(processed$full_name.x, processed$full_name.y, n_gram_width),
-			# both sides carry `st`, so the join suffixes them. Constant TRUE for the
-			# in-state pass; informative only once cross-border pairs exist.
-			state_agree = processed$st.x == processed$st.y,
-			mid_initial_agree = tolower(substr(processed$mid_nm, 1, 1)) == tolower(substr(processed$Voters_MiddleName, 1, 1)),
-			# 2-grams here, deliberately, where every other name comparison uses
-			# n_gram_width -- middle names are short enough that 3-grams are too coarse.
-			# Confirmed intentional; do not "correct" it to follow n_gram_width.
-			mid_name_agree = jaccard_similarity(tolower(processed$mid_nm), tolower(processed$Voters_MiddleName), 2),
-			phys_mid_name_len = nchar(processed$mid_nm),
-			voters_mid_name_len = nchar(processed$Voters_MiddleName),
-			zip_dist = zip_dist_vec
-		)
+  comparison_dataset <-
+    tibble::tibble(
+      # same n-gram width as the join that admitted the pair -- otherwise the gate
+      # would cut on one quantity and the model would score a different one
+      full_name_sim = zoomerjoin::jaccard_similarity(processed$full_name.x,
+                                                     processed$full_name.y,
+                                                     n_gram_width),
+      # both sides carry `st`, so the join suffixes them. Constant TRUE for the
+      # in-state pass; informative only once cross-border pairs exist.
+      state_agree = processed$st.x == processed$st.y,
+      mid_initial_agree = tolower(substr(processed$mid_nm, 1, 1)) ==
+        tolower(substr(processed$Voters_MiddleName, 1, 1)),
+      # 2-grams here, deliberately, where every other name comparison uses
+      # n_gram_width -- middle names are short enough that 3-grams are too coarse.
+      # Confirmed intentional; do not "correct" it to follow n_gram_width.
+      mid_name_agree = zoomerjoin::jaccard_similarity(tolower(processed$mid_nm),
+                                                      tolower(processed$Voters_MiddleName),
+                                                      2),
+      phys_mid_name_len = nchar(processed$mid_nm),
+      voters_mid_name_len = nchar(processed$Voters_MiddleName),
+      zip_dist = zip_dist_vec
+    )
 
-	bind_cols(comparison_dataset, processed)
+  dplyr::bind_cols(comparison_dataset, processed)
 }
 
 
@@ -255,39 +272,39 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
 #' @return `out_pth` -- candidate pairs for this state-year, one row per
 #'   (npi, LALVOTERID), or `NULL`
 locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_file,
-																		out_pth = "trunk/derived/lsh_pairs/{ys}",
-																		n_gram_width = 3, band_width = 7,
-																		n_bands = 400, threshold = 0.7) {
-	if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
-		return(NULL)
-	}
+                                    out_pth = "trunk/derived/lsh_pairs/{ys}",
+                                    n_gram_width = 3, band_width = 7,
+                                    n_bands = 400, threshold = 0.7) {
+  if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
+    return(NULL)
+  }
 
-	this_state <- get_l2_state(l2_extract)
-	this_year  <- get_l2_year(l2_extract)
-	ys         <- build_l2_out_subdir(l2_extract)
-	out_pth    <- glue::glue(out_pth)
+  this_state <- get_l2_state(l2_extract)
+  this_year <- get_l2_year(l2_extract)
+  ys <- build_l2_out_subdir(l2_extract)
+  out_pth <- glue::glue(out_pth)
 
-	unlink(out_pth, recursive = TRUE)
+  unlink(out_pth, recursive = TRUE)
 
-	# physician_data is partitioned year=/state=, so arrow prunes to this branch's single
-	# directory rather than scanning the national file 408 times.
-	phys_data <- arrow::open_dataset(unique(dirname(physician_data))) %>%
-		filter(year == !!this_year, state == !!this_state) %>%
-		collect() %>%
-		prepare_physicians()
+  # physician_data is partitioned year=/state=, so arrow prunes to this branch's single
+  # directory rather than scanning the national file 408 times.
+  phys_data <- arrow::open_dataset(unique(dirname(physician_data))) |>
+    dplyr::filter(year == !!this_year, state == !!this_state) |>
+    dplyr::collect() |>
+    prepare_physicians()
 
-	pairs <- match_pairs(phys_data, read_l2_partition(l2_extract), zip_centroid_file,
-											 n_gram_width, band_width, n_bands, threshold)
+  pairs <- match_pairs(phys_data, read_l2_partition(l2_extract), zip_centroid_file,
+                       n_gram_width, band_width, n_bands, threshold)
 
-	if (rlang::is_empty(pairs)) {
-		return(NULL)
-	}
+  if (rlang::is_empty(pairs)) {
+    return(NULL)
+  }
 
-	write_dataset(pairs, out_pth)
+  arrow::write_dataset(pairs, out_pth)
 
-	# One row per candidate pair. Holds only because physician_data is distinct in npi --
-	# a duplicated physician row would duplicate every pair it generates.
-	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
+  # One row per candidate pair. Holds only because physician_data is distinct in npi --
+  # a duplicated physician row would duplicate every pair it generates.
+  return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
 
 
@@ -313,59 +330,59 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 #'   Partitioned by the *physician's* state-year, not the voter's, so all of a physician's
 #'   pairs stay in one place.
 lsh_cross_border <- function(physician_data, l2_extract, lsh_pairs, l2_path,
-														 zip_centroid_file,
-														 out_pth = "trunk/derived/cross_border_pairs/{ys}",
-														 min_name_sim = 0.85,
-														 n_gram_width = 3, band_width = 7,
-														 n_bands = 400, threshold = 0.7) {
-	if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
-		return(NULL)
-	}
+                             zip_centroid_file,
+                             out_pth = "trunk/derived/cross_border_pairs/{ys}",
+                             min_name_sim = 0.85,
+                             n_gram_width = 3, band_width = 7,
+                             n_bands = 400, threshold = 0.7) {
+  if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
+    return(NULL)
+  }
 
-	this_state <- get_l2_state(l2_extract)
-	this_year  <- get_l2_year(l2_extract)
-	neighbours <- adjacent_states(this_state)
+  this_state <- get_l2_state(l2_extract)
+  this_year <- get_l2_year(l2_extract)
+  neighbours <- adjacent_states(this_state)
 
-	# AK and HI have no land neighbours
-	if (rlang::is_empty(neighbours)) {
-		return(NULL)
-	}
+  # AK and HI have no land neighbours
+  if (rlang::is_empty(neighbours)) {
+    return(NULL)
+  }
 
-	leftover <- unmatched_physicians(physician_data, lsh_pairs, this_state, this_year,
-																	 min_name_sim = min_name_sim)
+  leftover <- unmatched_physicians(physician_data, lsh_pairs, this_state, this_year,
+                                   min_name_sim = min_name_sim)
 
-	if (rlang::is_empty(leftover)) {
-		return(NULL)
-	}
+  if (rlang::is_empty(leftover)) {
+    return(NULL)
+  }
 
-	phys_data <- prepare_physicians(leftover)
+  phys_data <- prepare_physicians(leftover)
 
-	pairs <- neighbours %>%
-		map(\(nb) {
-			nb_extract <- resolve_l2_extract(nb, this_year, l2_path)
+  pairs <- neighbours |>
+    purrr::map(\(nb) {
+      nb_extract <- resolve_l2_extract(nb, this_year, l2_path)
 
-			# a neighbour may have no data for this year (2024 MD/MS/NV)
-			if (rlang::is_empty(nb_extract)) {
-				return(NULL)
-			}
+      # a neighbour may have no data for this year (2024 MD/MS/NV)
+      if (rlang::is_empty(nb_extract)) {
+        return(NULL)
+      }
 
-			match_pairs(phys_data, read_l2_partition(nb_extract), zip_centroid_file,
-									n_gram_width, band_width, n_bands, threshold)
-		}) %>%
-		compact() %>%
-		list_rbind()
+      match_pairs(phys_data, read_l2_partition(nb_extract), zip_centroid_file,
+                  n_gram_width, band_width, n_bands, threshold)
+    }) |>
+    purrr::compact() |>
+    purrr::list_rbind()
 
-	if (rlang::is_empty(pairs) || nrow(pairs) == 0) {
-		return(NULL)
-	}
+  if (rlang::is_empty(pairs) || nrow(pairs) == 0) {
+    return(NULL)
+  }
 
-	ys      <- build_l2_out_subdir(l2_extract)
-	out_pth <- glue::glue(out_pth)
+  ys <- build_l2_out_subdir(l2_extract)
+  out_pth <- glue::glue(out_pth)
 
-	unlink(out_pth, recursive = TRUE)
-	write_dataset(pairs, out_pth)
+  unlink(out_pth, recursive = TRUE)
+  arrow::write_dataset(pairs, out_pth)
 
-	# A physician can legitimately match voters in several neighbouring states, so the
-	# invariant is one row per (npi, LALVOTERID) pair, not one row per npi.
-	return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
+  # A physician can legitimately match voters in several neighbouring states, so the
+  # invariant is one row per (npi, LALVOTERID) pair, not one row per npi.
+  return_out_pth_check_distinct(out_pth, distinct_col = c("npi", "LALVOTERID"))
 }
