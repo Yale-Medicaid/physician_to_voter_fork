@@ -100,3 +100,84 @@ l2_occupation_col <- function(year) {
     "ConsumerData_Occupation_of_Person"
   }
 }
+
+#' Physicians in a state-year with no strong in-state candidate
+#'
+#' @description Selects who the cross-border pass should try. A physician is exempted only
+#' if Stage A found them **exactly one** strong in-state candidate -- a single voter at or
+#' above `min_name_sim`. Everyone else is retried:
+#'
+#' | Strong in-state candidates | Retried? | Why |
+#' |---|---|---|
+#' | 0 (or no candidates at all) | yes | nothing found in state |
+#' | exactly 1 | **no** | unambiguous in-state match |
+#' | 2 or more | yes | ambiguous -- a common name may have several same-state residents, none of them the right person |
+#'
+#' Requiring uniqueness rather than just a high maximum is what closes the common-name
+#' hole: a dozen in-state voters all scoring 0.99 is not evidence of a match, it is
+#' evidence of a common name.
+#'
+#' Defined without reference to the model, deliberately. Using `match_prob` would be
+#' circular, since `n` -- and therefore the prediction -- is only correct once a year's
+#' states are combined, which happens downstream of this step.
+#'
+#' Deliberately model-free. Defining it by RF probability would be circular, since `n` --
+#' and therefore the prediction -- is only correct after a year's states are combined,
+#' which happens downstream of this step.
+#'
+#' @param physician_data path to the cleaned physician dataset
+#' @param lsh_pairs paths to the Stage A candidate pair datasets
+#' @param state,year the state-year being processed
+#' @param min_name_sim name-similarity an in-state candidate must beat for the physician to
+#'   be considered already matched and skipped. Defaults to 0.85: only a *strong* in-state
+#'   name match buys an exemption, because excluding someone on a mediocre in-state hit is
+#'   the one error here that cannot be recovered downstream. Over-including is cheap by
+#'   comparison -- an extra candidate pair costs compute, and the RF ranks it away.
+#'
+#'   This is really a compute/recall dial. At 0.7 (the LSH threshold) only physicians with
+#'   no in-state candidate at all are retried; at 1.0 essentially everyone is, which is the
+#'   same as always running the cross-border pass and skipping this selection entirely.
+#'
+#'   Note the limit of a similarity-only rule: a common name can yield many in-state
+#'   candidates all scoring 0.99, none of them the right person, and this rule will still
+#'   grant the exemption. Name similarity is not match quality -- that is what the RF is
+#'   for, and it cannot be used here without circularity.
+#'
+#' @return a data frame of physician rows still wanting a match, or `NULL` if none
+unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
+                                 min_name_sim = 0.85) {
+  phys <- arrow::open_dataset(physician_data) |>
+    dplyr::filter(tolower(provider_business_mailing_address_state_name) == tolower(state)) |>
+    dplyr::collect()
+
+  if (nrow(phys) == 0) {
+    return(NULL)
+  }
+
+  # Count the STRONG in-state candidates per physician. Stage A may have produced
+  # nothing for this state-year at all.
+  strong <- if (rlang::is_empty(lsh_pairs)) {
+    tibble::tibble(npi = phys$npi[0], n_strong = integer(0))
+  } else {
+    arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
+      # {{ }} injects the argument's value, disambiguating it from the identically
+      # named hive partition columns
+      dplyr::filter(year == {{year}}, state == {{state}}) |>
+      dplyr::filter(full_name_sim >= min_name_sim) |>
+      dplyr::count(npi, name = "n_strong") |>
+      dplyr::collect()
+  }
+
+  out <- phys |>
+    dplyr::left_join(strong, by = dplyr::join_by(npi)) |>
+    # exempt only the unambiguous case: exactly one strong candidate. NA means no strong
+    # candidate at all (or no candidate at all), which is retried.
+    dplyr::filter(is.na(n_strong) | n_strong != 1) |>
+    dplyr::select(-n_strong)
+
+  if (nrow(out) == 0) {
+    return(NULL)
+  }
+
+  out
+}
