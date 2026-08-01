@@ -146,12 +146,13 @@ u <- unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018)
 ok("strong in-state match is NOT sent cross-border", !(1 %in% u$npi))
 ok("weak in-state match IS sent cross-border", 2 %in% u$npi)
 ok("physician with no candidate at all IS sent cross-border", 3 %in% u$npi)
-ok("returns 2 of 4 physicians", nrow(u) == 2)
-ok("default min_name_sim is 0.75, so 0.80 counts as matched",
-   !(4 %in% u$npi))
-ok("raising the cutoff to 0.85 does send the 0.80 case cross-border",
-   4 %in% unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018,
-                               min_name_sim = 0.85)$npi)
+ok("returns 3 of 4 physicians", nrow(u) == 3)
+ok("default min_name_sim is 0.85, so a 0.80 in-state hit is still retried",
+   4 %in% u$npi)
+ok("lowering the cutoff to 0.75 exempts the 0.80 case",
+   !(4 %in% unmatched_physicians(phys, "lsh/year=2018/state=CT", "CT", 2018,
+                                 min_name_sim = 0.75)$npi))
+ok("a 0.99 in-state hit is exempt even at the higher default", !(1 %in% u$npi))
 # 2019 has no Stage A data, so nobody has an in-state match and all 4 go cross-border.
 # If the filter read the hive `year` column instead of the argument it would match 2018
 # and return 2, so this pins the {{ }} disambiguation.

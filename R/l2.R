@@ -114,13 +114,24 @@ l2_occupation_col <- function(year) {
 #' @param physician_data path to the cleaned physician dataset
 #' @param lsh_pairs paths to the Stage A candidate pair datasets
 #' @param state,year the state-year being processed
-#' @param min_name_sim name-similarity a candidate must beat to count as a match.
-#'   Defaults to 0.75, below the 0.7 LSH threshold that admitted the pair in the first
-#'   place, so only weak survivors are retried across the border.
+#' @param min_name_sim name-similarity an in-state candidate must beat for the physician to
+#'   be considered already matched and skipped. Defaults to 0.85: only a *strong* in-state
+#'   name match buys an exemption, because excluding someone on a mediocre in-state hit is
+#'   the one error here that cannot be recovered downstream. Over-including is cheap by
+#'   comparison -- an extra candidate pair costs compute, and the RF ranks it away.
+#'
+#'   This is really a compute/recall dial. At 0.7 (the LSH threshold) only physicians with
+#'   no in-state candidate at all are retried; at 1.0 essentially everyone is, which is the
+#'   same as always running the cross-border pass and skipping this selection entirely.
+#'
+#'   Note the limit of a similarity-only rule: a common name can yield many in-state
+#'   candidates all scoring 0.99, none of them the right person, and this rule will still
+#'   grant the exemption. Name similarity is not match quality -- that is what the RF is
+#'   for, and it cannot be used here without circularity.
 #'
 #' @return a data frame of physician rows still wanting a match, or `NULL` if none
 unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
-                                 min_name_sim = 0.75) {
+                                 min_name_sim = 0.85) {
   phys <- arrow::open_dataset(physician_data) |>
     dplyr::filter(tolower(provider_business_mailing_address_state_name) == tolower(state)) |>
     dplyr::collect()

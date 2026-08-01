@@ -243,7 +243,9 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 	# create a second dataset of match statistics, then bind onto joined data
 	comparison_dataset <-
 		tibble(
-			full_name_sim = jaccard_similarity(processed$full_name.x, processed$full_name.y, 3), 
+			# same n-gram width as the join that admitted the pair -- otherwise the gate
+			# would cut on one quantity and the model would score a different one
+			full_name_sim = jaccard_similarity(processed$full_name.x, processed$full_name.y, n_gram_width),
 			# both blocking columns are named `st`, so the join suffixes them
 			state_agree = processed$st.x == processed$st.y,
 			mid_initial_agree = tolower(substr(processed$mid_nm,1,1)) == tolower(substr(processed$Voters_MiddleName,1,1)),
