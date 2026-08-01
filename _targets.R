@@ -10,6 +10,7 @@ source("R/clean_physician_data.R")
 source("R/locality_sensitive_hash.R")
 source("R/random_forest.R")
 source("R/l2.R")
+source("R/geographic.R")
 source("R/helpers.R")
 #source("R/match_diagnostics.R")
 
@@ -75,10 +76,20 @@ list(
 	targets::tar_target(rf_model,
 											train_rf_model(labelled_training_files)),
 
-	# Stage C -- combine a year's states, compute n, then predict. Per year because grf
-	# needs a materialised matrix and eight years of national pairs will not fit.
+	# Stage B -- physicians without a unique strong in-state match, retried against the
+	# voter files of bordering states. Branches over the same state-year grid as Stage A;
+	# adjacent partitions are resolved from l2_path inside the function, since a dynamic
+	# branch cannot reach its siblings.
+	targets::tar_target(cross_border_pairs,
+											lsh_cross_border(physician_data, l2_extracts, lsh_pairs,
+																			 l2_path, zip_centroid_file),
+											pattern = map(l2_extracts),
+											format = "file"),
+
+	# Stage C -- combine both passes for a year, compute n, then predict. Per year because
+	# grf needs a materialised matrix and eight years of national pairs will not fit.
 	targets::tar_target(scored_pairs,
-											score_pairs(lsh_pairs, rf_model, years),
+											score_pairs(lsh_pairs, cross_border_pairs, rf_model, years),
 											pattern = map(years),
 											format = "file")
 
