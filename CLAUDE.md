@@ -343,6 +343,30 @@ tests middle-name *length*, not agreement. `by` remains required either way.
 It is computed but deliberately not yet an RF feature; add it as the 9th feature when the
 cross-border pass lands.
 
+## The cross-border selection rule, and the `n` tension it exposes
+`unmatched_physicians()` exempts a physician from the cross-border pass only when Stage A
+found **exactly one** strong in-state candidate (a single voter at or above
+`min_name_sim`, default 0.85). Zero strong candidates, or two or more, both mean retry.
+
+Requiring *uniqueness* rather than just a high maximum is what closes the common-name hole:
+a dozen in-state voters all scoring 0.99 is evidence of a common name, not of a match.
+
+**The tension worth knowing about.** `n` (candidates per NPI) is an RF feature, so adding
+cross-border candidates *raises `n` for the retried physician and thereby moves the scores
+of their existing in-state candidates*. Extra candidates are therefore not free, and the
+claim "over-including only costs compute" is not quite right.
+
+Two consequences follow, neither yet resolved:
+- For a physician whose true match **is** in-state but ambiguous, retrying them cross-border
+  inflates `n` and may depress the correct candidate's `match_prob`.
+- More generally, `n` now partly encodes *"was this physician retried"*, which correlates
+  with "had a weak or ambiguous in-state match". So `n` is no longer purely a proxy for
+  name commonness — some selection-rule signal leaks into it.
+
+This is inherent to combining a selection rule with a count-based feature, not specific to
+the uniqueness variant. Worth measuring on a real run before trying to fix: compare
+`match_prob` for in-state candidates of retried versus exempted physicians.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:

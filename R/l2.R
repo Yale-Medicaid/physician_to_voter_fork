@@ -103,9 +103,23 @@ l2_occupation_col <- function(year) {
 
 #' Physicians in a state-year with no strong in-state candidate
 #'
-#' @description Selects who the cross-border pass should try. "Unmatched" is defined
-#' without reference to the model: a physician qualifies if their best in-state candidate
-#' falls below `min_name_sim`, or if Stage A found them no candidate at all.
+#' @description Selects who the cross-border pass should try. A physician is exempted only
+#' if Stage A found them **exactly one** strong in-state candidate -- a single voter at or
+#' above `min_name_sim`. Everyone else is retried:
+#'
+#' | Strong in-state candidates | Retried? | Why |
+#' |---|---|---|
+#' | 0 (or no candidates at all) | yes | nothing found in state |
+#' | exactly 1 | **no** | unambiguous in-state match |
+#' | 2 or more | yes | ambiguous -- a common name may have several same-state residents, none of them the right person |
+#'
+#' Requiring uniqueness rather than just a high maximum is what closes the common-name
+#' hole: a dozen in-state voters all scoring 0.99 is not evidence of a match, it is
+#' evidence of a common name.
+#'
+#' Defined without reference to the model, deliberately. Using `match_prob` would be
+#' circular, since `n` -- and therefore the prediction -- is only correct once a year's
+#' states are combined, which happens downstream of this step.
 #'
 #' Deliberately model-free. Defining it by RF probability would be circular, since `n` --
 #' and therefore the prediction -- is only correct after a year's states are combined,
@@ -140,24 +154,26 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
     return(NULL)
   }
 
-  # Stage A may have produced nothing for this state-year at all
-  best <- if (rlang::is_empty(lsh_pairs)) {
-    tibble::tibble(npi = phys$npi[0], best_sim = numeric(0))
+  # Count the STRONG in-state candidates per physician. Stage A may have produced
+  # nothing for this state-year at all.
+  strong <- if (rlang::is_empty(lsh_pairs)) {
+    tibble::tibble(npi = phys$npi[0], n_strong = integer(0))
   } else {
     arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
       # {{ }} injects the argument's value, disambiguating it from the identically
       # named hive partition columns
       dplyr::filter(year == {{year}}, state == {{state}}) |>
-      dplyr::group_by(npi) |>
-      dplyr::summarize(best_sim = max(full_name_sim, na.rm = TRUE), .groups = "drop") |>
+      dplyr::filter(full_name_sim >= min_name_sim) |>
+      dplyr::count(npi, name = "n_strong") |>
       dplyr::collect()
   }
 
   out <- phys |>
-    dplyr::left_join(best, by = dplyr::join_by(npi)) |>
-    # NA best_sim means Stage A found no candidate at all -- also unmatched
-    dplyr::filter(is.na(best_sim) | best_sim < min_name_sim) |>
-    dplyr::select(-best_sim)
+    dplyr::left_join(strong, by = dplyr::join_by(npi)) |>
+    # exempt only the unambiguous case: exactly one strong candidate. NA means no strong
+    # candidate at all (or no candidate at all), which is retried.
+    dplyr::filter(is.na(n_strong) | n_strong != 1) |>
+    dplyr::select(-n_strong)
 
   if (nrow(out) == 0) {
     return(NULL)
