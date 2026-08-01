@@ -343,6 +343,38 @@ tests middle-name *length*, not agreement. `by` remains required either way.
 It is computed but deliberately not yet an RF feature; add it as the 9th feature when the
 cross-border pass lands.
 
+## Tests
+`tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
+adjacency table, and the cross-border physician selector. Run from the repo root:
+
+```bash
+Rscript tests/test_l2_and_geography.R
+```
+
+Self-contained: it builds its own synthetic L2 hive tree in `tempdir()`, so it needs no
+real data and writes nothing inside the repo. Exits non-zero on failure.
+
+This is the whole test suite. It exists because the interesting failures in this pipeline
+are not syntax errors — they are silent behavioural ones (a stale extract being unioned in,
+a `NULL` branch reaching an operation that cannot take it, an occupation column renamed out
+from under a `contains()` selector). Those need a fixture to catch, and a fixture in a
+scratch directory dies with the session.
+
+## State adjacency — the rules, and one common error
+`state_adjacency()` in `R/geographic.R` is a 109-row tribble of undirected pairs. It is a
+proxy for "could plausibly commute across this border", not a statement of geography:
+
+- **Land borders: in.**
+- **Water-only borders: out** — RI↔NY across Block Island Sound, and Michigan's Great Lakes
+  pairs (IL, MN, NY, PA).
+- **Four Corners point contacts: in** — AZ↔CO and NM↔UT. Including them costs nothing.
+- **DC↔MD and DC↔VA: in**, and the most consequential pair in the country here.
+- **AK and HI have no land neighbours** and so never get a cross-border pass.
+
+**MI↔WI is a land border and is included.** Michigan's Upper Peninsula shares a real land
+boundary with Wisconsin. It is frequently mislabelled a water border — I made that mistake
+in the plan before checking — so the test asserts it explicitly.
+
 ## Documentation
 Methodology documentation lives in the mkdocs `docs/` source files and is the
 source of truth for *why* the pipeline works the way it does — read it before

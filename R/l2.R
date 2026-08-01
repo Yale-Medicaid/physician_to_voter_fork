@@ -100,3 +100,53 @@ l2_occupation_col <- function(year) {
     "ConsumerData_Occupation_of_Person"
   }
 }
+
+#' Physicians in a state-year with no strong in-state candidate
+#'
+#' @description Selects who the cross-border pass should try. "Unmatched" is defined
+#' without reference to the model: a physician qualifies if their best in-state candidate
+#' falls below `min_name_sim`, or if Stage A found them no candidate at all.
+#'
+#' Deliberately model-free. Defining it by RF probability would be circular, since `n` --
+#' and therefore the prediction -- is only correct after a year's states are combined,
+#' which happens downstream of this step.
+#'
+#' @param physician_data path to the cleaned physician dataset
+#' @param lsh_pairs paths to the Stage A candidate pair datasets
+#' @param state,year the state-year being processed
+#' @param min_name_sim name-similarity a candidate must beat to count as a match
+#'
+#' @return a data frame of physician rows still wanting a match, or `NULL` if none
+unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
+                                 min_name_sim = 0.85) {
+  phys <- arrow::open_dataset(physician_data) |>
+    dplyr::filter(tolower(provider_business_mailing_address_state_name) == tolower(state)) |>
+    dplyr::collect()
+
+  if (nrow(phys) == 0) {
+    return(NULL)
+  }
+
+  # Stage A may have produced nothing for this state-year at all
+  best <- if (rlang::is_empty(lsh_pairs)) {
+    tibble::tibble(npi = phys$npi[0], best_sim = numeric(0))
+  } else {
+    arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
+      dplyr::filter(year == .env$year, state == .env$state) |>
+      dplyr::group_by(npi) |>
+      dplyr::summarize(best_sim = max(full_name_sim, na.rm = TRUE), .groups = "drop") |>
+      dplyr::collect()
+  }
+
+  out <- phys |>
+    dplyr::left_join(best, by = dplyr::join_by(npi)) |>
+    # NA best_sim means Stage A found no candidate at all -- also unmatched
+    dplyr::filter(is.na(best_sim) | best_sim < min_name_sim) |>
+    dplyr::select(-best_sim)
+
+  if (nrow(out) == 0) {
+    return(NULL)
+  }
+
+  out
+}
