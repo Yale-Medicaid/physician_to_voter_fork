@@ -13,6 +13,7 @@ suppressPackageStartupMessages({
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
 source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
 source("R/random_forest.R"); source("R/reconcile.R"); source("R/nppes.R")
+source("R/gap_fill.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -420,6 +421,161 @@ got <- download_nppes_core(2024, out_dir = "nppes_dl")
 ok("an already-present file is returned, not re-downloaded",
    normalizePath(got) == normalizePath(planted) && file.mtime(planted) == before)
 ok("no .part leftover", length(list.files("nppes_dl", pattern = "[.]part$")) == 0)
+
+cat("\n== panel gap fill ==\n")
+
+# Physician-year universe: who had an NPI record where, per year.
+gap_universe <- tribble(
+  ~npi,  ~year, ~state,
+  101,   2023,  "MD",   101, 2024, "MD",   101, 2025, "MD",   # L2 absent for MD/2024
+  102,   2018,  "CT",   102, 2019, "CT",
+  103,   2018,  "CT",   103, 2019, "CT",
+  104,   2018,  "CT",   104, 2019, "CT",   104, 2020, "CT",
+  105,   2018,  "CT",   105, 2019, "MA",                      # changed practice state
+  106,   2018,  "CT",   106, 2019, "CT",
+  107,   2018,  "CT",   107, 2019, "CT",
+  108,   2018,  "CT",                                         # no 2019 record at all
+  109,   2018,  "CT",   109, 2019, "CT",                      # matched both years
+  110,   2018,  "CT",   110, 2019, "CT",   110, 2020, "CT"
+)
+
+# The panel. Deliberately absurd voter ids -- nothing here resembles a real record.
+gap_panel <- tribble(
+  ~npi, ~year, ~LALVOTERID, ~match_prob, ~zip_dist, ~tied,
+  101,  2023,  "FAKE-V1",   0.95,        3,         FALSE,
+  101,  2025,  "FAKE-V1",   0.97,        3,         FALSE,
+  102,  2018,  "FAKE-V2",   0.95,        5,         FALSE,
+  103,  2018,  "FAKE-V3",   0.20,        5,         FALSE,   # too weak to anchor
+  104,  2018,  "FAKE-V4",   0.95,        5,         FALSE,   # two distinct anchor voters
+  104,  2020,  "FAKE-V5",   0.96,        5,         FALSE,
+  105,  2018,  "FAKE-V6",   0.95,        5,         FALSE,
+  106,  2018,  "FAKE-V7",   0.95,        500,       FALSE,   # anchor voter far away
+  107,  2018,  "FAKE-V8",   0.95,        NA,        FALSE,   # ZIP had no ZCTA
+  108,  2018,  "FAKE-V9",   0.95,        5,         FALSE,
+  109,  2018,  "FAKE-VA",   0.95,        5,         FALSE,
+  109,  2019,  "FAKE-VA",   0.96,        5,         FALSE,
+  110,  2018,  "FAKE-VB",   0.95,        5,         TRUE,    # tied anchor year
+  110,  2018,  "FAKE-VC",   0.95,        5,         TRUE
+) %>%
+  mutate(state_agree = TRUE, full_name_sim = 0.99, n = 1L)
+
+phys_pths <- local({
+  unlink("gapf_phys", recursive = TRUE)
+  u <- mutate(gap_universe, year = as.integer(year))
+  for (y in sort(unique(u$year))) {
+    write_dataset(filter(u, year == y), file.path("gapf_phys", paste0("year=", y)),
+                  partitioning = "state")
+  }
+  file.path("gapf_phys", paste0("year=", sort(unique(u$year))))
+})
+
+panel_pth <- local({
+  unlink("gapf_panel", recursive = TRUE)
+  write_dataset(mutate(gap_panel, year = as.integer(year)), "gapf_panel")
+  "gapf_panel"
+})
+
+# Synthetic L2 leaves -- these only need to parse, not exist. MD/2024 is deliberately
+# missing, standing in for the real 2024 MD/MS/NV gap.
+gap_l2 <- c("l2/state=CT/year=2018/month=11/day=15", "l2/state=CT/year=2019/month=11/day=15",
+            "l2/state=CT/year=2020/month=11/day=15", "l2/state=MA/year=2019/month=11/day=15",
+            "l2/state=MD/year=2023/month=11/day=15", "l2/state=MD/year=2025/month=11/day=15")
+
+cls <- classify_panel_gaps(panel_pth, phys_pths, gap_l2)
+
+ok("gaps come from physician_data, so a year with no NPI record is not a gap",
+   nrow(cls) == 9 && !any(cls$npi == 108))
+ok("a physician matched in every year they exist has no gap", !any(cls$npi == 109))
+
+tier <- function(n, y) cls$fill_tier[cls$npi == n & cls$year == y]
+ok("structural absence (no L2 partition) is tier 1", tier(101, 2024) == 1L)
+ok("L2 present but unmatched, gates passed, is tier 2", tier(102, 2019) == 2L)
+ok("a weak-only anchor is not filled", tier(103, 2019) == 3L)
+ok("two distinct anchor voters is not filled", tier(104, 2019) == 3L)
+ok("a changed practice state is not filled", tier(105, 2019) == 3L)
+ok("an anchor voter beyond max_fill_zip_dist is not filled", tier(106, 2019) == 3L)
+ok("an NA zip_dist is not filled -- proximity cannot be checked", tier(107, 2019) == 3L)
+ok("a tied anchor year is ambiguous, so not filled",
+   all(cls$fill_tier[cls$npi == 110] == 3L))
+
+ok("only the intended gate fails for the weak anchor",
+   !cls$has_anchor[cls$npi == 103] && cls$l2_present[cls$npi == 103])
+ok("the far-anchor gap fails `near` and nothing else",
+   with(cls[cls$npi == 106, ], has_anchor && unambiguous && state_stable && !near))
+ok("the moved physician fails `state_stable` and nothing else",
+   with(cls[cls$npi == 105, ], has_anchor && unambiguous && !state_stable && near))
+ok("l2_present is FALSE only for the missing MD/2024 partition",
+   sum(!cls$l2_present) == 1 && !cls$l2_present[cls$npi == 101])
+
+# Tier 1 must not depend on the state-year being missing for *everyone* -- MD/2023 and
+# MD/2025 exist, only 2024 does not.
+ok("tier 1 keys on the gap's own state-year, not the state",
+   tier(101, 2024) == 1L && nrow(cls[cls$npi == 101, ]) == 1)
+
+filled_pth <- fill_panel_gaps(panel_pth, phys_pths, gap_l2, out_pth = "gapf_out")
+fp <- open_dataset(filled_pth) %>% collect()
+
+ok("filled panel is the panel plus exactly the fillable gaps",
+   nrow(fp) == nrow(gap_panel) + 2)
+ok("two rows are flagged filled", sum(fp$filled) == 2)
+ok("both tiers appear once each",
+   setequal(fp$fill_tier[fp$filled], c(1L, 2L)))
+ok("observed rows carry filled = FALSE and no tier",
+   all(!fp$filled[!fp$filled]) && all(is.na(fp$fill_tier[!fp$filled])))
+
+fills <- filter(fp, filled)
+ok("a fill carries the anchor's voter identity",
+   fills$LALVOTERID[fills$npi == 101] == "FAKE-V1" &&
+     fills$LALVOTERID[fills$npi == 102] == "FAKE-V2")
+ok("a fill carries NO scored attributes -- identity only",
+   all(is.na(fills$match_prob)) && all(is.na(fills$zip_dist)) &&
+     all(is.na(fills$full_name_sim)) && all(is.na(fills$n)) &&
+     all(is.na(fills$state_agree)) && all(is.na(fills$tied)))
+ok("fills land in the year that was empty",
+   fills$year[fills$npi == 101] == 2024 && fills$year[fills$npi == 102] == 2019)
+ok("fills are unique per npi-year, and never collide with an observed row",
+   !anyDuplicated(fp[c("npi", "year", "LALVOTERID")]))
+
+# The observed half must survive untouched: same rows, same values.
+obs_back <- fp %>% filter(!filled) %>% select(names(gap_panel)) %>% arrange(npi, year, LALVOTERID)
+ok("observed rows pass through unchanged",
+   isTRUE(all.equal(as.data.frame(obs_back),
+                    as.data.frame(gap_panel %>% mutate(year = as.integer(year)) %>%
+                                    arrange(npi, year, LALVOTERID)),
+                    check.attributes = FALSE)))
+
+gs <- summarize_panel_gaps(panel_pth, phys_pths, gap_l2)
+ok("summary counts every gap", gs$n_gaps == 9 && gs$n_npi_with_gap == 8)
+ok("summary tiers sum to the gap count",
+   gs$n_tier_1 + gs$n_tier_2 + gs$n_tier_3 == gs$n_gaps)
+ok("summary reports one tier 1 and one tier 2", gs$n_tier_1 == 1 && gs$n_tier_2 == 1)
+ok("summary attributes each failure to the right gate",
+   gs$n_fail_no_anchor == 1 && gs$n_fail_ambiguous == 3 && gs$n_fail_moved == 1)
+ok("summary tells a distant anchor apart from a missing zip_dist",
+   gs$n_fail_far == 1 && gs$n_fail_no_zip == 1)
+
+# Thresholds must actually bind, or they are decoration. Pull the tier out by npi rather
+# than by position -- two calls need not agree on row order, and indexing one result with
+# another's mask silently compares the wrong rows.
+tier_of <- function(df, id) dplyr::pull(dplyr::filter(df, npi == !!id), fill_tier)
+ok("raising min_fill_prob above the anchors stops all filling",
+   all(classify_panel_gaps(panel_pth, phys_pths, gap_l2, min_fill_prob = 0.99)$fill_tier == 3L))
+ok("relaxing max_fill_zip_dist admits the far anchor",
+   tier_of(classify_panel_gaps(panel_pth, phys_pths, gap_l2,
+                               max_fill_zip_dist = 1000), 106) == 2L)
+ok("dropping min_fill_prob admits the weak anchor",
+   tier_of(classify_panel_gaps(panel_pth, phys_pths, gap_l2,
+                               min_fill_prob = 0.1), 103) == 2L)
+ok("classification row order is deterministic across runs",
+   identical(classify_panel_gaps(panel_pth, phys_pths, gap_l2)[c("npi", "year")],
+             cls[c("npi", "year")]))
+
+# An empty L2 list means nothing could be matched anywhere, so every gap is structural.
+ok("with no L2 at all, fillable gaps are tier 1",
+   all(classify_panel_gaps(panel_pth, phys_pths, character(0)) %>%
+         filter(fillable) %>% pull(fill_tier) == 1L))
+ok("a NULL panel yields no filled dataset",
+   is.null(fill_panel_gaps(NULL, phys_pths, gap_l2, out_pth = "gapf_null")))
 
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",

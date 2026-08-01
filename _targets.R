@@ -13,6 +13,7 @@ source("R/l2.R")
 source("R/geographic.R")
 source("R/reconcile.R")
 source("R/nppes.R")
+source("R/gap_fill.R")
 source("R/helpers.R")
 #source("R/match_diagnostics.R")
 
@@ -124,7 +125,22 @@ list(
 
 	targets::tar_target(physician_matches,
 											reconcile_physician_matches(physician_year_panel_data),
-											format = "file")
+											format = "file"),
+
+	# The panel again, with empty physician-years filled where the identity can be carried
+	# across confidently. Separate from physician_year_panel_data on purpose: the unfilled
+	# panel stays available, and nothing downstream starts seeing imputed rows by accident.
+	# Filled rows carry a LALVOTERID and NA for every scored attribute.
+	targets::tar_target(physician_year_panel_filled,
+											fill_panel_gaps(physician_year_panel_data, physician_data,
+																			l2_extracts),
+											format = "file"),
+
+	# How many gaps there were and why each was or was not filled. Read it before trusting
+	# the filled panel -- targets::tar_read(panel_gap_summary).
+	targets::tar_target(panel_gap_summary,
+											summarize_panel_gaps(physician_year_panel_data, physician_data,
+																					 l2_extracts))
 
 
 
