@@ -913,6 +913,37 @@ with two medical schools. It is a small in-memory target: `tar_read(cms_npi_conf
 - Match existing code style/conventions found in the repo over introducing new
   patterns, unless there's a clear correctness or maintainability reason to change.
 
+### Whitespace — verified against `treated-by-thy-neighbor`, not inferred
+These are the author's own conventions, checked by counting occurrences in that repo rather
+than guessed at. The Phase 4 style pass applies them; much of the current `R/` violates them
+because I wrote it.
+
+- **Never vertically align.** One space before `=`, `<-` and `|>`, always. No padding to line
+  up a block of named arguments or assignments. (Zero counter-examples in ~890 pipe
+  expressions.) So `n_anchor_years = n_distinct(year)`, not `n_anchor_years  = ...`.
+- **`*` and `/` are tight; `+` and `-` are spaced.** `NDC_QTY/DAYS_SUPPLY*factor`, but
+  `a + b`. Verified: 0 spaced `*`//`/`, 0 tight `+`/`-`. This matches the tidyverse guide's
+  high-precedence-operator rule.
+- **`==`, `<=`, `%in%` and friends are always spaced.** 136 spaced, 0 tight.
+- **Continuation lines align to the opening parenthesis**, and the first argument stays on
+  the same line as the call. Where that first argument needs a pipe, pipe it inline and
+  indent the continuation two from the first argument's column:
+
+  ```r
+  # yes
+  dplyr::left_join(universe |>
+                     dplyr::select(npi, year, anchor_state = state),
+                   by = dplyr::join_by(npi, year))
+
+  # no -- first argument on its own line, closing paren dedented
+  dplyr::left_join(
+    dplyr::select(universe, npi, year, anchor_state = state),
+    by = dplyr::join_by(npi, year)
+  )
+  ```
+- **Native `|>` only.** Zero `%>%` in the reference repo; this project still has many.
+- **Spaces, never tabs**, at 2 per level.
+
 ## Git workflow
 - **Never commit directly to `main`.** Always work on a feature branch.
 - Branch naming: `feature/...`, `fix/...`, `refactor/...` as appropriate to the
