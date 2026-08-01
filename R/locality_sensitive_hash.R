@@ -63,17 +63,16 @@ prepare_physicians <- function(phys) {
 			# coalesce the middle name, matching the voter side. Unguarded, paste0 renders a
 			# missing middle name as the literal string "NA" and splices it into the name
 			# being compared, pushing otherwise-perfect matches below the LSH threshold.
-			full_name = tolower(paste0(provider_first_name, coalesce(provider_middle_name, ""), `provider_last_name_(legal_name)`)),
-			full_name_no_mid = tolower(paste0(provider_first_name, `provider_last_name_(legal_name)`)),
-			st = tolower(coalesce(provider_business_mailing_address_state_name, "")),
+			full_name = tolower(paste0(provider_first_name, coalesce(provider_middle_name, ""), provider_last_name)),
+			full_name_no_mid = tolower(paste0(provider_first_name, provider_last_name)),
+			st = tolower(coalesce(state, "")),
 			# middle initial alone; state is handled by the partition
 			mi = tolower(coalesce(substr(provider_middle_name, 1, 1), ""))
 		) %>%
 		rename(
-			zip = provider_business_mailing_address_postal_code,
 			frst_nm = provider_first_name,
 			mid_nm = provider_middle_name,
-			last_nm = `provider_last_name_(legal_name)`
+			last_nm = provider_last_name
 		)
 }
 
@@ -264,13 +263,16 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 	}
 
 	this_state <- get_l2_state(l2_extract)
+	this_year  <- get_l2_year(l2_extract)
 	ys         <- build_l2_out_subdir(l2_extract)
 	out_pth    <- glue::glue(out_pth)
 
 	unlink(out_pth, recursive = TRUE)
 
-	phys_data <- arrow::open_dataset(physician_data) %>%
-		filter(tolower(provider_business_mailing_address_state_name) == tolower(this_state)) %>%
+	# physician_data is partitioned year=/state=, so arrow prunes to this branch's single
+	# directory rather than scanning the national file 408 times.
+	phys_data <- arrow::open_dataset(unique(dirname(physician_data))) %>%
+		filter(year == !!this_year, state == !!this_state) %>%
 		collect() %>%
 		prepare_physicians()
 

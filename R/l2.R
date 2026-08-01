@@ -146,8 +146,8 @@ l2_occupation_col <- function(year) {
 #' @return a data frame of physician rows still wanting a match, or `NULL` if none
 unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
                                  min_name_sim = 0.85) {
-  phys <- arrow::open_dataset(physician_data) |>
-    dplyr::filter(tolower(provider_business_mailing_address_state_name) == tolower(state)) |>
+  phys <- arrow::open_dataset(unique(dirname(physician_data))) |>
+    dplyr::filter(year == !!year, state == !!state) |>
     dplyr::collect()
 
   if (nrow(phys) == 0) {

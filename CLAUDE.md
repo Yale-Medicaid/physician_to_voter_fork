@@ -497,6 +497,65 @@ different layouts across 2018–2025 and the documented
 Do not replace the table with a rule. Four schemes plus a truncated year means a rule fails
 *silently* on the next reorganisation; a listed URL that stops resolving fails loudly.
 
+## Physician side: three sources, one per-year table
+`clean_physician_data()` builds one table per year from:
+
+| Source | Varies by year? | Gives |
+| --- | --- | --- |
+| NBER `core` | **yes** | names, practice + mailing addresses |
+| NBER `ptaxcode`, two extracts | no | primary taxonomy code |
+| NUCC crosswalk | no | taxonomy grouping, for the physician filter |
+| CMS **DAC** / Physician Compare | no | `grd_yr`, `med_sch` |
+
+Everything except the CMS DAC file now comes from **one static archive** (`data.nber.org`),
+deliberately — CMS reorganises its download pages, NBER's tree does not. The CMS NPPES
+dissemination file is no longer used at all; that target is gone, and with it a 9.4 GB
+manually-placed input.
+
+`DAC_NationalDownloadableFile.csv` is the Medicare "Doctors and Clinicians" file, not
+NPPES — easy to confuse. Consequence: `grd_yr`, and so `year_dist`, is `NA` for any
+physician who does not bill Medicare. Pre-existing, but it means that missingness tracks
+Medicare participation rather than data quality.
+
+**Taxonomy: four extracts unioned, newest-first.** `read_taxonomy_union()` reads them in
+descending vintage and keeps the first row per NPI, so the most recent designation wins and
+providers who drop out mid-panel are still recovered. It sorts by vintage internally rather
+than trusting the order it is handed.
+
+**Only four of eight years are usable, and that is the source's doing, not a choice:**
+
+| Year | Status |
+| --- | --- |
+| 2018 | no taxonomy file published at all |
+| 2019 | usable — `npi, seq, ptaxcode` |
+| 2020 | HTTP **403** for every format, while `core` in the same directory serves fine |
+| 2021, 2022 | published **without an `npi` column** (`ptaxcode, ptaxgroup, pprimtax`) — unjoinable |
+| 2023 | usable — extra columns, same keys |
+| 2024, 2025 | usable |
+
+Residual gap: an NPI that both appeared and disappeared strictly between 2019-12 and
+2023-05 is in none of the four. Small, since NPIs are rarely deactivated — but real.
+
+`seq == 1` selects the primary taxonomy, matching the `_1` suffix the CMS dissemination
+file used, so the physician filter is unchanged in meaning. It is also load-bearing
+mechanically: `ptaxcode` holds one row per taxonomy per NPI, so without it the join would
+duplicate providers and the `distinct in npi` assertion would fire.
+
+**Address: practice location, falling back to mailing.** `plocstatename`/`ploczip` with
+`pmailstatename`/`pmailzip` as fallback, and `addr_source` recording which was used. The
+pipeline previously used the *mailing* address everywhere, which never matched what
+`figures/processing.png` described — a mailing address can be a billing office or a PO box,
+which is not what `zip_dist` is meant to measure.
+
+**ZIP columns must be read as strings.** `read_nppes_core()` pins `ploczip` and `pmailzip`
+via a partial `col_types` schema. Left to inference a CSV ZIP becomes an integer and loses
+its leading zero — `06510` reads back as `6510` — which then fails every ZCTA centroid
+lookup silently, because the centroid table is zero-padded. Same trap as the centroid file
+itself; it bites on both sides.
+
+Output is partitioned `year=/state=`, so each matching branch prunes to one directory
+instead of scanning nationally 408 times.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:

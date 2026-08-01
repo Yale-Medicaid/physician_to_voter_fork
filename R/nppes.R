@@ -75,8 +75,116 @@ nppes_core_url <- function(year) {
 #'
 #' @return path to the downloaded file
 download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 3600) {
-  spec <- nppes_core_url(year)
-  dest <- file.path(out_dir, basename(spec$url))
+  download_nber_file(nppes_core_url(year)$url, out_dir = out_dir, timeout = timeout)
+}
+
+
+#' NBER taxonomy (`ptaxcode`) extracts
+#'
+#' @description Taxonomy comes from NBER rather than CMS so that every NPPES input is
+#' fetched from one static archive -- CMS reorganises its download pages, NBER's tree does
+#' not.
+#'
+#' **Only four of the eight years are usable**, which is a property of the source, not a
+#' choice:
+#'
+#' | Year | Status |
+#' |---|---|
+#' | 2018 | no taxonomy file published at all |
+#' | 2019 | usable -- `npi, seq, ptaxcode` |
+#' | 2020 | returns HTTP 403 for every format, while `core` in the same directory is fine |
+#' | 2021, 2022 | published without an `npi` column (`ptaxcode, ptaxgroup, pprimtax`), so unjoinable |
+#' | 2023 | usable -- extra columns, same keys |
+#' | 2024, 2025 | usable -- `npi, seq, ptaxcode` |
+#'
+#' Listed newest-first. `clean_physician_data()` unions them in that order and keeps the
+#' first designation per NPI, so the **most recent** classification wins and providers who
+#' drop out mid-panel are still recovered.
+#'
+#' The residual gap: anyone who both appeared and disappeared strictly between 2019-12 and
+#' 2023-05 is in none of these extracts. NPIs are rarely deactivated and taxonomy is
+#' near-static, so this should be a small population -- but it is a real one.
+#'
+#' @return a tibble of `vintage`, `url`, newest first
+nppes_taxonomy_urls <- function() {
+  tibble::tribble(
+    ~"vintage",  ~"url",
+    "2025-12",   "https://data.nber.org/npi/2025/12/byvar/PTAXCODE_202512.parquet",
+    "2024-12",   "https://data.nber.org/npi/2024/12/byvar/PTAXCODE_202412.parquet",
+    "2023-05",   "https://data.nber.org/npi/2023/5/ptaxcode_20235.csv",
+    "2019-12",   "https://data.nber.org/npi/2019/12/byvar/PTAXCODE_201912.parquet"
+  )
+}
+
+
+#' Download every usable NBER taxonomy extract
+#'
+#' @param out_dir directory to download into
+#' @param timeout seconds to allow per file
+#'
+#' @return paths, newest vintage first
+download_nppes_taxonomy <- function(out_dir = "trunk/raw/nppes", timeout = 3600) {
+  nppes_taxonomy_urls()$url |>
+    purrr::map_chr(\(u) download_nber_file(u, out_dir = out_dir, timeout = timeout))
+}
+
+
+#' Read and union the taxonomy extracts, most recent designation winning
+#'
+#' @description Sorts by vintage rather than trusting the order of `paths`, so a caller
+#' cannot silently invert the precedence.
+#'
+#' `seq == 1` selects the primary taxonomy, matching the `_1` suffix the CMS dissemination
+#' file used. It is also load-bearing mechanically: `ptaxcode` holds one row per taxonomy
+#' per NPI, so without it the downstream join would duplicate providers.
+#'
+#' @param paths taxonomy files from `download_nppes_taxonomy()`
+#'
+#' @return a tibble of `npi`, `taxonomy_code`, one row per NPI
+read_taxonomy_union <- function(paths) {
+  order <- nppes_taxonomy_urls() |>
+    dplyr::mutate(file = basename(url)) |>
+    dplyr::arrange(dplyr::desc(vintage))
+
+  ordered <- tibble::tibble(path = paths, file = basename(paths)) |>
+    dplyr::inner_join(order, by = "file") |>
+    dplyr::arrange(dplyr::desc(vintage)) |>
+    dplyr::pull(path)
+
+  ordered |>
+    purrr::map(\(pth) {
+      ds <- if (tools::file_ext(pth) == "parquet") {
+        arrow::open_dataset(pth)
+      } else {
+        arrow::open_dataset(pth, format = "csv")
+      }
+
+      ds |>
+        dplyr::filter(seq == 1) |>
+        dplyr::select(npi, taxonomy_code = ptaxcode) |>
+        dplyr::collect() |>
+        # npi arrives as int64 from parquet and double from csv; unify before binding
+        dplyr::mutate(npi = as.numeric(npi))
+    }) |>
+    purrr::list_rbind() |>
+    # first occurrence wins, and the list is newest-first
+    dplyr::distinct(npi, .keep_all = TRUE)
+}
+
+
+#' Fetch a file from NBER, once
+#'
+#' @description Idempotent: an already-present file is returned untouched. Downloads land
+#' on a `.part` name first, so an interrupted transfer cannot leave a truncated file that
+#' the idempotency check would then accept forever.
+#'
+#' @param url file to fetch
+#' @param out_dir directory to download into
+#' @param timeout seconds to allow; the default `options(timeout=)` of 60 is far too short
+#'
+#' @return path to the downloaded file
+download_nber_file <- function(url, out_dir = "trunk/raw/nppes", timeout = 3600) {
+  dest <- file.path(out_dir, basename(url))
 
   if (file.exists(dest)) {
     return(dest)
@@ -87,14 +195,12 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
   old <- options(timeout = timeout)
   on.exit(options(old), add = TRUE)
 
-  # download to a temporary name first, so an interrupted transfer cannot leave a
-  # truncated file that the idempotency check above would then happily accept forever
   part <- paste0(dest, ".part")
-  utils::download.file(spec$url, destfile = part, mode = "wb", quiet = TRUE)
+  utils::download.file(url, destfile = part, mode = "wb", quiet = TRUE)
 
   assertthat::assert_that(
     file.exists(part) && file.size(part) > 0,
-    msg = cli::format_error("Downloaded an empty file from {.url {spec$url}}")
+    msg = cli::format_error("Downloaded an empty file from {.url {url}}")
   )
 
   file.rename(part, dest)
@@ -105,6 +211,11 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
 
 #' Read a downloaded NPPES core file, whichever format it is in
 #'
+#' @description ZIP columns are forced to string. Left to type inference a CSV ZIP becomes
+#' an integer and loses its leading zero -- `06510` reads back as `6510` -- which then fails
+#' every ZCTA centroid lookup, silently, since the centroid table is zero-padded. Only the
+#' ZIP columns need pinning; everything else infers fine.
+#'
 #' @param path path returned by `download_nppes_core()`
 #'
 #' @return an arrow Dataset
@@ -112,6 +223,10 @@ read_nppes_core <- function(path) {
   if (tools::file_ext(path) == "parquet") {
     arrow::open_dataset(path)
   } else {
-    arrow::open_dataset(path, format = "csv")
+    arrow::open_dataset(
+      path,
+      format = "csv",
+      col_types = arrow::schema(ploczip = arrow::string(), pmailzip = arrow::string())
+    )
   }
 }

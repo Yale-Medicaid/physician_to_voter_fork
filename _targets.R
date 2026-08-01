@@ -52,9 +52,15 @@ list(
 											pattern = map(years),
 											format = "file"),
 
+	# Taxonomy: the four NBER extracts that are actually joinable, newest first.
+	# One target rather than a branched one, so the ordering the union depends on is
+	# fixed by nppes_taxonomy_urls() and cannot be shuffled by branch aggregation.
+	targets::tar_target(nppes_taxonomy_files,
+											download_nppes_taxonomy(),
+											format = "file"),
+
 	# clean physician data
 	tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv", format = "file"),
-	tar_target(nppes_file, "trunk/raw/NPPES_Data_Dissemination_February_2023/npidata_pfile_20050523-20230212.csv", format = "file"),
 	tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv", format = "file"),
 	# NBER ZCTA centroid file (Census internal points), 890 KB.
 	# https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
@@ -63,7 +69,14 @@ list(
 	# files contain -- see that function for why we compute rather than look up.
 	tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv", format = "file"),
 
-	tar_target(physician_data,clean_physician_data(cms_file, nppes_file, nucc_taxonomy_file), format = "file"),
+	# One physician table per year: names and addresses from that year's NBER core file,
+	# taxonomy from the fixed CMS snapshot. Partitioned year=/state= so each matching
+	# branch prunes to its own directory instead of scanning nationally.
+	targets::tar_target(physician_data,
+											clean_physician_data(nppes_core_files, nppes_taxonomy_files,
+																					 cms_file, nucc_taxonomy_file, years),
+											pattern = map(years, nppes_core_files),
+											format = "file"),
 
 	# How much the "drop NPIs with conflicting CMS records" rule in
 	# clean_physician_data() actually costs, and which field disagrees. Small, so it
