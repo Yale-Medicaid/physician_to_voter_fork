@@ -367,6 +367,52 @@ This is inherent to combining a selection rule with a count-based feature, not s
 the uniqueness variant. Worth measuring on a real run before trying to fix: compare
 `match_prob` for in-state candidates of retried versus exempted physicians.
 
+## Output paths must stay two levels deep
+`unmatched_physicians()` and `score_pairs()` both recover a pass's partitioned root with
+`unique(dirname(dirname(path)))` — the idiom borrowed from `treated-by-thy-neighbor`. That
+makes the *depth* of every writer's `out_pth` template a load-bearing contract:
+
+```r
+out_pth = "trunk/derived/lsh_pairs/{ys}"   # -> .../lsh_pairs/year=YYYY/state=XX
+```
+
+Flatten it and `dirname(dirname(...))` resolves to something useless (`"."` for a
+single-segment path), and `arrow::open_dataset()` then tries to read whatever else is in
+that directory. It fails loudly rather than silently, but the error is confusing —
+"Parquet magic bytes not found" pointing at an unrelated CSV. Caught exactly this way while
+writing the tests.
+
+## `R/` holds only function definitions
+`R/label.R` and `R/make_training_data.R` used to live in `R/` but are **standalone,
+side-effecting scripts** — they execute on `source()` and try to read training data. They
+are now in `scripts/`.
+
+This matters because `targets::tar_source(files = "R")` loads *everything* in the
+directory. With those two present it aborted with `Failed to open local file
+'trunk/raw/labelled_training_data/ben.parquet'` before the pipeline could even be defined.
+Verified after the move: `tar_source(files = "R")` loads all 25 functions cleanly, which
+unblocks replacing the manual `source()` calls in Phase 4.
+
+Keep `R/` pure. Anything that runs at load time belongs in `scripts/`.
+
+## Why the RF has 8 features and not 9
+`state_agree` is computed in the comparison block and carried into the output, but is
+**not** in `make_X_matrix()`. That is deliberate, and the reasoning is worth keeping
+because the omission looks like an oversight:
+
+- A state line is a partitioning artifact, not a commuting barrier. `zip_dist` already
+  measures the thing that actually matters, and measures it continuously.
+- The model transfers to cross-border pairs **without new labels**. Training data is
+  same-state only, but intra-state distances in large states run to hundreds of miles, so a
+  67-mile cross-border pair sits well inside the `zip_dist` range the model already learned
+  from — it just learned it from Texas rather than from a border crossing.
+- `state_agree` is constant `TRUE` in the existing labels, so `grf` could not split on it
+  regardless. Adding it would have been inert *and* redundant.
+
+I initially argued the opposite — that Stage B would need a hand-labelled cross-border
+sample before its candidates could be scored properly. That overstated the problem: it
+treated the state boundary as the causal variable when distance is.
+
 ## Tests
 `tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
 adjacency table, and the cross-border physician selector. Run from the repo root:

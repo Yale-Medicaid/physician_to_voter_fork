@@ -1,7 +1,23 @@
 #' Make Predictor Matrix
 #'
 #' @description Extract the predictors used for a classification model, and format them as a
-#' numeric matrix
+#' numeric matrix.
+#'
+#' **`state_agree` is deliberately NOT a feature**, though it is computed and carried.
+#' Crossing a state line is not what makes a match implausible -- distance is, and
+#' `zip_dist` already measures that directly. A physician living 15 miles away across a
+#' border is nearer than one living 60 miles away in-state, and the model should treat them
+#' accordingly.
+#'
+#' This also means the model transfers to cross-border pairs without new labels. The
+#' training data is same-state only, but intra-state distances in large states run to
+#' hundreds of miles, so `zip_dist` at (say) 67 miles is well inside the range the model has
+#' already learned from -- it simply learned it from Texas rather than from a border
+#' crossing. Adding `state_agree` would have contributed nothing that `zip_dist` does not
+#' carry better, while being constant in training and so unsplittable anyway.
+#'
+#' It stays in the output as a diagnostic: it is the natural way to ask what share of
+#' high-probability matches are cross-border.
 #'
 #' @param df the input dataframe
 #'
@@ -67,41 +83,42 @@ train_rf_model <- function(labelled_training_files) {
 #' @description Combines every state's candidate pairs for a year, computes `n`, and
 #' predicts.
 #'
-#' `n` (candidates per NPI) is computed *here* rather than in
-#' `locality_sensitive_hash()`. Today the two are equivalent: physicians are filtered to
-#' their own practice state, so within a year an NPI appears in exactly one state branch.
-#' It matters from Stage B onwards, when the cross-border pass starts adding pairs for the
-#' same NPI out of *adjacent* states -- at which point a per-branch count would undercount
-#' and drift from the national definition the model was trained against. Computing it here
-#' is correct now and stays correct then.
+#' `n` (candidates per NPI) is computed *here*, over both passes together, rather than in
+#' either matching function. That is now load-bearing rather than merely forward-looking:
+#' Stage B adds pairs for the same NPI out of adjacent states, so a per-branch count would
+#' undercount and drift from the national definition the model was trained against.
 #'
 #' Scoring is per year rather than all at once because `grf` needs a materialised matrix,
 #' and every candidate pair for eight years at national scale will not fit in memory. One
 #' year is the scale the pipeline has historically handled.
 #'
-#' @param lsh_pairs paths to the per-state-year candidate pair datasets
+#' @param lsh_pairs paths to the Stage A (in-state) candidate pair datasets
+#' @param cross_border_pairs paths to the Stage B (cross-border) datasets, possibly empty
 #' @param rf_model fitted model from `train_rf_model()`
 #' @param this_year the year this branch scores
 #' @param out_pth glue template for the output directory
 #'
 #' @return `out_pth` -- the year's pairs with a `match_prob` column. Named `match_prob`,
 #'   not `match`, so it cannot be confused with the training *label* column of that name.
-score_pairs <- function(lsh_pairs, rf_model, this_year,
+score_pairs <- function(lsh_pairs, cross_border_pairs, rf_model, this_year,
 												out_pth = "trunk/derived/scored_pairs/year={this_year}") {
-	if (rlang::is_empty(lsh_pairs)) {
+	if (rlang::is_empty(lsh_pairs) && rlang::is_empty(cross_border_pairs)) {
 		return(NULL)
 	}
 
 	out_pth <- glue::glue(out_pth)
 	unlink(out_pth, recursive = TRUE)
 
-	# Recover the partitioned root from the branch paths so the hive year/state columns
-	# come back; opening the leaf paths individually would lose them.
-	root <- unique(dirname(dirname(lsh_pairs)))
+	# Recover each pass's partitioned root from its branch paths so the hive year/state
+	# columns come back; opening the leaf paths individually would lose them.
+	roots <- c(
+		if (rlang::is_empty(lsh_pairs)) NULL else unique(dirname(dirname(lsh_pairs))),
+		if (rlang::is_empty(cross_border_pairs)) NULL else unique(dirname(dirname(cross_border_pairs)))
+	)
 
-	pairs <- open_dataset(root) %>%
-		filter(year == this_year) %>%
-		collect()
+	pairs <- roots %>%
+		map(\(r) open_dataset(r) %>% filter(year == this_year) %>% collect()) %>%
+		list_rbind()
 
 	if (nrow(pairs) == 0) {
 		return(NULL)

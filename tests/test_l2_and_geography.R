@@ -7,10 +7,12 @@
 ## be mistaken for real voter records.
 
 suppressPackageStartupMessages({
-  library(arrow); library(tidyverse)
+  library(arrow); library(tidyverse); library(zoomerjoin); library(lubridate)
 })
+# source before the setwd() below -- these paths are relative to the repo root
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
-source("R/clean_physician_data.R")
+source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
+source("R/random_forest.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -168,6 +170,68 @@ ok("NULL lsh_pairs sends everyone cross-border",
    nrow(unmatched_physicians(phys, NULL, "CT", 2018)) == 5)
 ok("a state with no physicians returns NULL",
    is.null(unmatched_physicians(phys, "lsh/year=2018/state=CT", "NY", 2018)))
+
+## ------------------------------------------------------ cross-border matching
+cat("\n== lsh_cross_border ==\n")
+# CT and NY are adjacent. npi 12 practises in CT but lives in NY, with no CT namesake.
+# npi 11 has a unique strong CT match and must stay exempt.
+write_csv(tibble(NPI = 11:12,
+                 `Provider First Name` = c("Aaardvarkina","Bloopberta"),
+                 `Provider Middle Name` = c("Q","Zebulon"),
+                 `Provider Last Name (Legal Name)` = c("Zzyzxton","Crossborderson"),
+                 `Provider Business Mailing Address State Name` = "CT",
+                 `Provider Business Mailing Address Postal Code` = "06510",
+                 `Healthcare Provider Taxonomy Code_1` = "207R00000X",
+                 `Entity Type Code` = 1L), "xb_nppes.csv")
+write_csv(tibble(NPI = 11:12, grd_yr = 1990L, med_sch = "FAKE SCHOOL"), "xb_cms.csv")
+xb_phys <- clean_physician_data("xb_cms.csv", "xb_nppes.csv", "nucc.csv", out_pth = "xb_phys")
+
+mkv <- function(first, mid, last, state, zip, id) tibble(
+  LALVOTERID = id, Voters_FirstName = first, Voters_MiddleName = mid,
+  Voters_LastName = last, Voters_NameSuffix = NA_character_,
+  Voters_BirthDate = as.Date("1963-01-01"), Residence_Addresses_State = state,
+  Residence_Addresses_Zip = zip, Residence_Addresses_ZipPlus4 = "1234",
+  # required by read_l2_partition()'s bare select, unlike the any_of() columns
+  Residence_Addresses_City = "Fakeville",
+  CommercialData_Occupation = "Medical-Physician")
+for (p in list(list("CT", mkv("Aaardvarkina","Q","Zzyzxton","CT","06510","XBCT1")),
+               list("NY", mkv("Bloopberta","Zebulon","Crossborderson","NY","10001","XBNY1")))) {
+  d <- file.path("xb", paste0("state=", p[[1]]), "year=2018", "month=06", "day=01")
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  write_parquet(p[[2]], file.path(d, "part-0.parquet"))
+}
+# minimal centroid file covering just these two ZIPs
+write_csv(tibble(zcta5 = c("06510","10001"),
+                 intptlat = c(41.3053, 40.7506),
+                 intptlong = c(-72.9276, -73.9971)), "xb_cent.csv")
+
+xb_l2 <- "xb/state={state}/year={year}"
+ct_leaf <- resolve_l2_extract("CT", 2018, xb_l2)
+# NB the {ys} in out_pth is not optional: unmatched_physicians() and score_pairs() both
+# recover the partitioned root with dirname(dirname(path)), so the output must sit two
+# levels deep. A flat out_pth silently resolves the root to "." .
+a <- locality_sensitive_hash(xb_phys, ct_leaf, "xb_cent.csv", out_pth = "xb_a/{ys}")
+a_d <- open_dataset(a) |> collect()
+ok("in-state pass matches the physician who has a CT namesake", 11 %in% a_d$npi)
+ok("in-state pass finds nothing for the cross-border physician", !(12 %in% a_d$npi))
+
+b <- lsh_cross_border(xb_phys, ct_leaf, a, xb_l2, "xb_cent.csv", out_pth = "xb_b/{ys}")
+ok("cross-border pass produced output", !is.null(b))
+b_d <- open_dataset(b) |> collect()
+ok("cross-border pass finds the NY-resident physician", 12 %in% b_d$npi)
+ok("...matched to a NY voter", all(b_d$st.y[b_d$npi == 12] == "ny"))
+ok("physician with a unique strong in-state match is NOT retried", !(11 %in% b_d$npi))
+ok("state_agree is TRUE for every in-state pair", all(a_d$state_agree))
+ok("state_agree is FALSE for every cross-border pair", all(!b_d$state_agree))
+ok("state_agree is carried in the output but is NOT an RF feature",
+   "state_agree" %in% names(b_d) &&
+     !("state_agree" %in% colnames(make_X_matrix(mutate(b_d, n = 1L)))))
+ok("the RF matrix has 8 features",
+   ncol(make_X_matrix(mutate(b_d, n = 1L))) == 8)
+ok("cross-border output is partitioned by the PHYSICIAN's state",
+   all(get_l2_state(b) == "CT"))
+ok("zip_dist across the border is a real positive distance",
+   all(b_d$zip_dist > 0 & is.finite(b_d$zip_dist)))
 
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
