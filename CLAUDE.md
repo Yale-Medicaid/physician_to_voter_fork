@@ -457,6 +457,64 @@ return paths two levels deep (`year=/state=`) and need `dirname(dirname())`, whi
 `scored_pairs` is one level (`year=`) and needs a single `dirname()`. That is structural —
 they branch over different keys — not an inconsistency to tidy away.
 
+## Gap filling — a separate panel, identity only
+`R/gap_fill.R` adds two targets. `physician_year_panel_filled` is the panel plus one row per
+gap judged fillable; `panel_gap_summary` is the in-memory ledger of how many gaps there were
+and why each was or was not filled (`targets::tar_read(panel_gap_summary)`).
+
+Deliberately a **second** target rather than a change to `physician_year_panel_data`. The
+unfilled panel stays available, and nothing downstream starts seeing imputed rows because
+someone forgot this step exists.
+
+**The gap universe is `physician_data`, not the panel.** A gap exists only where the
+physician held an NPI record that year — otherwise there is nothing to fill and no claim to
+make. This is what makes the whole thing possible only after the per-year physician work:
+before that, the physician side had no year dimension to be absent from.
+
+**Four gates, and `NA` fails every one of them.** `has_anchor` (some year matched at
+`match_prob >= min_fill_prob`, default 0.9 — the panel applies no cutoff, so a physician's
+only "match" may be near-zero), `unambiguous` (exactly one distinct `LALVOTERID` across
+anchor years), `state_stable` (the gap year's practice state equals the anchors' single
+practice state), `near` (best anchor's `zip_dist` non-`NA` and within `max_fill_zip_dist`,
+default 50 miles).
+
+`fill_tier` then records *why the year was empty*, given the gates passed: **1** = no L2
+partition existed (2024 MD/MS/NV — matching was impossible, so absence carries no
+information about the physician), **2** = L2 existed and the physician was not matched
+(absence is now evidence, though ambiguous), **3** = gates failed, not filled.
+
+The tiers are a confidence label, not different gates — both apply the same four. That is
+the point: Tier 2 is weaker because there is counter-evidence, not because it was checked
+less carefully.
+
+**Movers are never filled**, because `unambiguous` fails for them by construction. That is
+intentional. `mover` already means only that the best-matching voter *changed*, which is
+equally consistent with scoring noise; picking one of the two records to carry across a gap
+would be a guess dressed as data.
+
+**Filled rows carry an identity and nothing else.** `LALVOTERID` is set; `match_prob`,
+`zip_dist`, `full_name_sim`, `n`, `state_agree` and `tied` are all `NA`. There is no model
+output for a year that was never scored, and copying the anchor year's values in would
+invent a measurement. It also makes a filled row impossible to mistake for a scored one even
+if `filled` is ignored.
+
+**What a fill licenses.** It asserts *this physician is this voter*, extended to a year where
+that was not observed. Safe for appending time-invariant voter attributes. **Unsafe wherever
+registration or turnout is the outcome** — in Tier 2 especially, the absence may *be* the
+finding, and filling it then answers the question with the assumption. Filter on `filled` or
+`fill_tier`.
+
+`n_fail_far` and `n_fail_no_zip` are reported apart in the summary: a distant anchor is a
+plausibility problem, a missing `zip_dist` is a ZCTA coverage one (PO-box-only ZIPs have no
+centroid). Lumping them reads the second as the first.
+
+### Arrow's `distinct()` does not promise a row order
+`classify_panel_gaps()` ends with `dplyr::arrange(npi, year)` because `universe` is read
+through arrow, and arrow's distinct/aggregate ordering is not guaranteed stable between
+calls. Caught by a test that indexed one call's result with another call's logical mask and
+passed or failed depending on which check ran — the classic symptom. Any comparison of two
+runs row-by-row needs an explicit order; do not remove the `arrange()`.
+
 ## Use `!!`, not `{{ }}`, to disambiguate an argument from a same-named column
 Several functions take a `year` or `state` argument and filter a dataset whose hive
 partition columns have the *same names*. The tempting tidyeval form is wrong:
@@ -557,8 +615,9 @@ Output is partitioned `year=/state=`, so each matching branch prunes to one dire
 instead of scanning nationally 408 times.
 
 ## Tests
-`tests/test_l2_and_geography.R` — 30 checks over the L2 partition helpers, the state
-adjacency table, and the cross-border physician selector. Run from the repo root:
+`tests/test_l2_and_geography.R` — **139 checks** over the L2 partition helpers, the state
+adjacency table, the cross-border physician selector, the NPPES URL table and taxonomy
+union, and the panel gap filler. Run from the repo root:
 
 ```bash
 Rscript tests/test_l2_and_geography.R
