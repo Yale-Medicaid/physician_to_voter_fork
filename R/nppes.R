@@ -38,16 +38,12 @@ nppes_core_url <- function(year) {
     2020L, 12L, "parquet", "https://data.nber.org/npi/2020/csv/core202012.parquet",
     2021L, 12L, "parquet", "https://data.nber.org/npi/2021/csv/core202112.parquet",
     2022L, 12L, "parquet", "https://data.nber.org/npi/2022/csv/core202212.parquet",
-    # 2023 stops at May, and the May file is CSV only -- the April file has parquet but is
-    # an earlier vintage, and latest-available wins.
     2023L, 5L, "csv", "https://data.nber.org/npi/2023/5/core_20235.csv",
     2024L, 12L, "parquet", "https://data.nber.org/npi/2024/12/core_202412.parquet",
     2025L, 12L, "parquet", "https://data.nber.org/npi/2025/12/core_202512.parquet"
   )
 
-  # !! not {{ }}: the embrace injects the argument *expression*, so a caller doing
-  # nppes_core_url(year) would inject the symbol `year`, which the data mask resolves to
-  # the column -- making the test trivially true for every row. !! injects the value.
+  # !! not {{ }}: the embrace would resolve `year` to the column, matching every row
   out <- dplyr::filter(urls, year == !!year)
 
   assertthat::assert_that(
@@ -167,7 +163,6 @@ read_taxonomy_union <- function(paths) {
         dplyr::mutate(npi = as.numeric(npi))
     }) |>
     purrr::list_rbind() |>
-    # first occurrence wins, and the list is newest-first
     dplyr::distinct(npi, .keep_all = TRUE)
 }
 

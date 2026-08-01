@@ -23,7 +23,6 @@ resolve_l2_extract <- function(state, year, l2_path) {
     return(NULL)
   }
 
-  # recurse = 1 reaches month=/day=; keep only the day= leaves
   leaves <- fs::dir_ls(stub, recurse = 1, type = "directory") |>
     as.character()
   leaves <- leaves[stringr::str_detect(basename(leaves), "^day=")]
@@ -154,17 +153,12 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
     return(NULL)
   }
 
-  # Count the STRONG in-state candidates per physician. Stage A may have produced
-  # nothing for this state-year at all.
   strong <- if (rlang::is_empty(lsh_pairs)) {
     tibble::tibble(npi = phys$npi[0], n_strong = integer(0))
   } else {
     arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
-      # !! injects the argument's *value*, disambiguating it from the identically named
-      # hive partition columns. Not {{ }}: the embrace injects the argument *expression*,
-      # so a caller passing a local also called `year` would inject the symbol, the data
-      # mask would resolve it to the column, and `year == year` would match every row.
-      # This worked only because lsh_cross_border() happens to pass `this_year`.
+      # !! not {{ }}: the embrace would inject the symbol, which the data mask resolves
+      # to the identically named hive column, making the filter match every row
       dplyr::filter(year == !!year, state == !!state) |>
       dplyr::filter(full_name_sim >= min_name_sim) |>
       dplyr::count(npi, name = "n_strong") |>
@@ -173,8 +167,6 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
 
   out <- phys |>
     dplyr::left_join(strong, by = dplyr::join_by(npi)) |>
-    # exempt only the unambiguous case: exactly one strong candidate. NA means no strong
-    # candidate at all (or no candidate at all), which is retried.
     dplyr::filter(is.na(n_strong) | n_strong != 1) |>
     dplyr::select(-n_strong)
 

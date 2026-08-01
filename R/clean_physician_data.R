@@ -32,9 +32,6 @@ clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc
   out_pth <- glue::glue(out_pth)
   unlink(out_pth, recursive = TRUE)
 
-  # An NPI carrying more than one (grd_yr, med_sch) combination is dropped entirely --
-  # there is no principled way to choose, and keeping one would fan that physician out
-  # through every downstream join. count_cms_npi_conflicts() reports the cost.
   cms_raw <- readr::read_csv(cms_file, show_col_types = FALSE) |>
     dplyr::rename_with(tolower) |>
     dplyr::select(npi, grd_yr, med_sch) |>
@@ -55,11 +52,9 @@ clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc
   providers <- read_nppes_core(nppes_core_file) |>
     dplyr::select(npi, entity, pfname, pmname, plname,
                   plocstatename, ploczip, pmailstatename, pmailzip) |>
-    # entity 1 is an individual; 2 is an organisation
     dplyr::filter(entity == 1) |>
     dplyr::collect() |>
     dplyr::mutate(
-      # practice location, falling back to mailing where practice is absent
       addr_source = dplyr::if_else(!is.na(plocstatename) & plocstatename != "",
                                    "practice", "mailing"),
       state = dplyr::if_else(addr_source == "practice", plocstatename, pmailstatename),

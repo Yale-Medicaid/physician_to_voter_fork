@@ -49,8 +49,6 @@
 #' @return one row per physician-year gap, carrying each gate and a `fill_tier`
 classify_panel_gaps <- function(panel, physician_data, l2_extracts,
                                 min_fill_prob = 0.9, max_fill_zip_dist = 50) {
-  # physician_data is partitioned year=/state= but returns paths at the `year=` level, so
-  # its root is one dirname() up -- the same shape as scored_pairs, not lsh_pairs.
   universe <- arrow::open_dataset(unique(dirname(physician_data))) |>
     dplyr::select(npi, year, state) |>
     dplyr::distinct() |>
@@ -62,8 +60,6 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
     dplyr::collect() |>
     dplyr::mutate(year = as.integer(year))
 
-  # State-years that actually had L2. get_l2_year() returns a double; the universe's year
-  # is an integer, and join_by would not match across the two.
   l2_present <- tibble::tibble(
     state = get_l2_state(l2_extracts),
     year = as.integer(get_l2_year(l2_extracts)),
@@ -71,8 +67,6 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
   ) |>
     dplyr::distinct()
 
-  # Anchor years: matched strongly enough to carry an identity across a gap. Joined back to
-  # the universe to recover the practice state of each anchor year.
   anchor_rows <- matched |>
     dplyr::filter(!is.na(match_prob), match_prob >= min_fill_prob) |>
     dplyr::left_join(universe |>
@@ -85,13 +79,10 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
       n_anchor_years = dplyr::n_distinct(year),
       n_anchor_voters = dplyr::n_distinct(LALVOTERID),
       n_anchor_states = dplyr::n_distinct(anchor_state),
-      # only meaningful when n_anchor_states == 1, which state_stable requires
       anchor_state = dplyr::first(anchor_state),
       .groups = "drop"
     )
 
-  # The single anchor row a fill is taken from. Same deterministic ordering as
-  # reconcile_physician_matches(): probability, then LALVOTERID, then year.
   best_anchor <- anchor_rows |>
     dplyr::arrange(dplyr::desc(match_prob), LALVOTERID, year) |>
     dplyr::group_by(npi) |>
@@ -112,8 +103,7 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
       l2_present = !is.na(l2),
       has_anchor = !is.na(fill_LALVOTERID),
       unambiguous = !is.na(n_anchor_voters) & n_anchor_voters == 1,
-      # guard anchor_state explicitly: n_distinct() counts NA as a value, so an anchor year
-      # missing from the universe would otherwise pass as a single "state"
+      # !is.na(anchor_state) is required: n_distinct() counts NA as a value
       state_stable = !is.na(n_anchor_states) & n_anchor_states == 1 &
         !is.na(anchor_state) & anchor_state == state,
       near = !is.na(anchor_zip_dist) & anchor_zip_dist <= max_fill_zip_dist,
@@ -125,9 +115,7 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
       )
     ) |>
     dplyr::select(-l2) |>
-    # `universe` comes out of arrow, whose distinct/aggregate ordering is not guaranteed
-    # stable, so impose one. Callers comparing two runs row-by-row would otherwise be
-    # relying on luck.
+    # arrow's distinct() ordering is not stable between calls; impose one
     dplyr::arrange(npi, year)
 }
 
@@ -200,9 +188,6 @@ fill_panel_gaps <- function(panel, physician_data, l2_extracts,
       fill_tier
     )
 
-  # Filled rows must be one per physician-year, and must not collide with an observed row.
-  # The anti_join in classify_panel_gaps() guarantees the second; assert the first, since a
-  # duplicated anchor would otherwise quietly fan a physician out.
   assertthat::assert_that(
     !anyDuplicated(filled[c("npi", "year")]),
     msg = cli::format_error("Gap fills must be unique per {.var npi}-{.var year}")
@@ -240,17 +225,12 @@ summarize_panel_gaps <- function(panel, physician_data, l2_extracts,
       n_tier_1 = sum(fill_tier == 1L),
       n_tier_2 = sum(fill_tier == 2L),
       n_tier_3 = sum(fill_tier == 3L),
-      # why the unfilled ones failed; these overlap
       n_fail_no_anchor = sum(fill_tier == 3L & !has_anchor),
       n_fail_ambiguous = sum(fill_tier == 3L & has_anchor & !unambiguous),
       n_fail_moved = sum(fill_tier == 3L & has_anchor & !state_stable),
-      # `near` fails two ways, and they are different stories: a genuinely distant anchor
-      # is a plausibility problem, a missing zip_dist is a ZCTA coverage one (PO-box-only
-      # ZIPs have no centroid). Reported apart so the second is not read as the first.
       n_fail_far = sum(fill_tier == 3L & has_anchor & !is.na(anchor_zip_dist) &
                                anchor_zip_dist > max_fill_zip_dist),
       n_fail_no_zip = sum(fill_tier == 3L & has_anchor & is.na(anchor_zip_dist)),
-      # structural absence that could not be filled anyway
       n_no_l2_unfilled = sum(fill_tier == 3L & !l2_present)
     )
 }

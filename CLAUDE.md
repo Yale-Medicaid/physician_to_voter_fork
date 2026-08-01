@@ -964,6 +964,28 @@ Applied across `R/` and `_targets.R` in `refactor/style-pass`. Two traps found d
   A blanket namespacing pass will rewrite them to `purrr::map()` and break branching
   entirely. They must stay bare.
 
+### In-body comments: only where they prevent a wrong edit
+No inline commentary explaining what the code does. A comment inside a function body earns
+its place only by stopping a specific, plausible "fix" that would break something — and the
+reason must not be visible from the code itself. Everything else goes.
+
+Cut from 138 lines to 31 across `R/` and `_targets.R`. For calibration,
+`treated-by-thy-neighbor` carries 33 in-body comments across 3270 lines of code, and most of
+those are commented-out code rather than prose.
+
+The eleven that survived in `R/` are all of one kind — a trap with a named failure mode:
+`by` being required by CRAN zoomerjoin, `block_by = "mi"` carrying the middle-initial
+agreement, `coalesce` before `nchar`, the 2-gram width being deliberate, `!!` not `{{ }}`
+(twice), dropping `year` before writing to a `year=` directory, arrow's unstable `distinct()`
+ordering, `n_distinct()` counting `NA`, the int64/double unification, and the `asin()` clamp.
+
+`_targets.R` keeps only short section labels (`# Stage A -- in-state candidate pairs, one
+branch per state-year`), matching the reference repo, plus the `packages = "grf"` note.
+
+**Reasoning belongs here, not in the code.** Every explanation removed was already recorded
+in this file — that is what made the deletion safe, and it is the standing division of
+labour. If a future change needs justifying, write it here and leave the code clean.
+
 ### ⚠ `packages = "grf"` on `scored_pairs` is load-bearing
 `tar_option_set()` no longer takes a project-wide `packages` argument, because everything in
 `R/` is namespaced. There is exactly **one** exception, declared per-target on `scored_pairs`.

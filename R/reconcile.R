@@ -23,8 +23,7 @@ physician_year_panel <- function(scored_pairs,
 
   unlink(out_pth, recursive = TRUE)
 
-  # scored_pairs is partitioned by year ALONE, so its root is one dirname() up -- unlike
-  # lsh_pairs / cross_border_pairs, which are year=/state= and need two.
+  # scored_pairs is partitioned by year alone, so its root is one dirname() up
   root <- unique(dirname(scored_pairs))
 
   arrow::open_dataset(root) |>
@@ -79,22 +78,10 @@ reconcile_physician_matches <- function(panel,
     dplyr::mutate(
       n_years_matched = dplyr::n_distinct(year),
       n_distinct_voters = dplyr::n_distinct(LALVOTERID),
-      # the best-matching voter is not the same every year
       mover = dplyr::n_distinct(LALVOTERID) > 1,
-      # a year in which two candidates tied for that year's best
       any_tied_in_year = any(tied),
-      # two or more DISTINCT voters tie for this physician's overall best, possibly
-      # in different years -- the panel-level flag above does not see those. Counting
-      # rows rather than distinct voters would wrongly flag the common case of the
-      # same voter matching equally well in several years, which is not ambiguity.
       best_is_tied = dplyr::n_distinct(LALVOTERID[match_prob == max(match_prob)]) > 1
     ) |>
-    # Deterministic tie-break: LALVOTERID then year, both ascending. Arbitrary but
-    # reproducible, which matters more -- slice_max(with_ties = FALSE) alone would
-    # return whichever row happened to come first in the input. `year` is in the key
-    # so that the same voter matching equally well in several years yields a stable
-    # `best_year` rather than an arbitrary one. `best_is_tied` records that a choice
-    # between distinct voters was made at all.
     dplyr::arrange(dplyr::desc(match_prob), LALVOTERID, year, .by_group = TRUE) |>
     dplyr::slice_head(n = 1) |>
     dplyr::ungroup() |>
@@ -105,7 +92,6 @@ reconcile_physician_matches <- function(panel,
       best_year = year,
       n_years_matched, n_distinct_voters, mover,
       any_tied_in_year, best_is_tied,
-      # was the chosen best match found across a state line
       best_cross_border = !state_agree
     ) |>
     arrow::write_dataset(out_pth)
