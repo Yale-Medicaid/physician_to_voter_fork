@@ -365,8 +365,10 @@ scratch directory dies with the session.
 proxy for "could plausibly commute across this border", not a statement of geography:
 
 - **Land borders: in.**
-- **Water-only borders: out** — RI↔NY across Block Island Sound, and Michigan's Great Lakes
-  pairs (IL, MN, NY, PA).
+- **Water-only borders: out** — RI↔NY across Block Island Sound, and the four pairs where
+  Michigan faces another state across a Great Lake rather than touching it: MI↔IL, MI↔MN,
+  MI↔NY, MI↔PA. Each of those is *Michigan* paired with that state — **NY↔PA itself is a
+  ~300-mile land border and is included.**
 - **Four Corners point contacts: in** — AZ↔CO and NM↔UT. Including them costs nothing.
 - **DC↔MD and DC↔VA: in**, and the most consequential pair in the country here.
 - **AK and HI have no land neighbours** and so never get a cross-border pass.

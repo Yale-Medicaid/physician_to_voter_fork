@@ -7,8 +7,10 @@
 #' geography, so the inclusion rules are:
 #' - **Land borders: in.** Including Michigan-Wisconsin, which share a real land border via
 #'   the Upper Peninsula (it is often mislabelled a water border).
-#' - **Water-only borders: out.** Rhode Island-New York across Block Island Sound, and
-#'   Michigan's Great Lakes pairs (IL, MN, NY, PA). Nobody commutes those.
+#' - **Water-only borders: out.** Rhode Island-New York across Block Island Sound, and the
+#'   four pairs where Michigan faces another state across a Great Lake rather than touching
+#'   it: MI-IL, MI-MN, MI-NY, MI-PA. Nobody commutes those.
+#'   (Not to be confused with NY-PA, which is a ~300-mile land border and IS included.)
 #' - **Four Corners point contacts: in.** Arizona-Colorado and New Mexico-Utah touch only
 #'   at a point, but including them costs nothing -- the LSH simply finds little.
 #' - **DC-Maryland and DC-Virginia: in**, and the most consequential pair in the country

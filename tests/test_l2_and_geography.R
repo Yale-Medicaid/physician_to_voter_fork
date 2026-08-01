@@ -111,6 +111,13 @@ ok("MI-WI included (real land border via the Upper Peninsula)",
    "WI" %in% adjacent_states("MI"))
 ok("RI-NY excluded (water only)", !("NY" %in% adjacent_states("RI")))
 ok("MI-IL excluded (water only)", !("IL" %in% adjacent_states("MI")))
+ok("MI-NY excluded (water only)", !("NY" %in% adjacent_states("MI")))
+ok("MI-PA excluded (water only)", !("PA" %in% adjacent_states("MI")))
+ok("MI-MN excluded (water only)", !("MN" %in% adjacent_states("MI")))
+# guard against the easy misreading of the rule above: these are MICHIGAN pairs.
+# NY-PA is a long land border and must stay in.
+ok("NY-PA included (long land border, not a Michigan lake pair)",
+   "PA" %in% adjacent_states("NY"))
 ok("every abbreviation is a real state or DC",
    all(all_states %in% c(state.abb, "DC")))
 
