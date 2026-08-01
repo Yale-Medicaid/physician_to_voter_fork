@@ -45,6 +45,13 @@ physician_year_panel <- function(scored_pairs,
 #' @description Reduces the physician-year panel to a single row per NPI: the highest
 #' probability match found in any year, plus enough context to tell why.
 #'
+#' **Ties.** Two flags, because there are two kinds. `any_tied_in_year` comes from the panel
+#' and marks a year in which two candidates tied for that year's best. `best_is_tied` marks
+#' the physician-level case: two or more rows tie for the overall best, possibly in
+#' different years, which the panel flag cannot see. Exactly one row per NPI is still
+#' emitted -- the tie is broken deterministically by `LALVOTERID` ascending, which is
+#' arbitrary but reproducible -- and `best_is_tied` records that the choice was made.
+#'
 #' `mover` is TRUE when a physician's best-matching voter is not the same in every year
 #' they appear. Note what that does and does not mean: it says the best match *changed*,
 #' which is consistent with a genuine move but equally with two similar voters trading
@@ -69,19 +76,37 @@ reconcile_physician_matches <- function(panel,
 	open_dataset(panel) %>%
 		collect() %>%
 		group_by(npi) %>%
-		summarize(
-			best_LALVOTERID = LALVOTERID[which.max(match_prob)],
-			best_match_prob = max(match_prob),
-			best_year       = year[which.max(match_prob)],
-			n_years_matched = n_distinct(year),
+		mutate(
+			n_years_matched   = n_distinct(year),
 			n_distinct_voters = n_distinct(LALVOTERID),
 			# the best-matching voter is not the same every year
-			mover = n_distinct(LALVOTERID) > 1,
-			# any year where two candidates tied for best
-			any_tied = any(tied),
-			# was the best match ever found across a state line
-			best_cross_border = !state_agree[which.max(match_prob)],
-			.groups = "drop"
+			mover             = n_distinct(LALVOTERID) > 1,
+			# a year in which two candidates tied for that year's best
+			any_tied_in_year  = any(tied),
+			# two or more DISTINCT voters tie for this physician's overall best, possibly
+			# in different years -- the panel-level flag above does not see those. Counting
+			# rows rather than distinct voters would wrongly flag the common case of the
+			# same voter matching equally well in several years, which is not ambiguity.
+			best_is_tied      = n_distinct(LALVOTERID[match_prob == max(match_prob)]) > 1
+		) %>%
+		# Deterministic tie-break: LALVOTERID then year, both ascending. Arbitrary but
+		# reproducible, which matters more -- slice_max(with_ties = FALSE) alone would
+		# return whichever row happened to come first in the input. `year` is in the key
+		# so that the same voter matching equally well in several years yields a stable
+		# `best_year` rather than an arbitrary one. `best_is_tied` records that a choice
+		# between distinct voters was made at all.
+		arrange(desc(match_prob), LALVOTERID, year, .by_group = TRUE) %>%
+		slice_head(n = 1) %>%
+		ungroup() %>%
+		transmute(
+			npi,
+			best_LALVOTERID = LALVOTERID,
+			best_match_prob = match_prob,
+			best_year       = year,
+			n_years_matched, n_distinct_voters, mover,
+			any_tied_in_year, best_is_tied,
+			# was the chosen best match found across a state line
+			best_cross_border = !state_agree
 		) %>%
 		write_dataset(out_pth)
 

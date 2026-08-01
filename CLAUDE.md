@@ -419,9 +419,21 @@ Two targets: `physician_year_panel_data` (one row per npi-year, the year's best 
 
 - **No `match_prob` cutoff is applied at either step.** Thresholding is the consumer's
   choice, so every physician with any candidate appears, however weak.
-- **Ties are kept and flagged (`tied`, `any_tied`), not dropped.** Two candidates at
-  identical probability is a real state of affairs; dropping the physician would quietly
-  shrink the panel.
+- **Ties are kept and flagged, not dropped**, and there are *two* kinds:
+  - `any_tied_in_year` — two candidates tied for a given year's best. Comes from the panel,
+    where both rows are kept.
+  - `best_is_tied` — two or more **distinct voters** tie for the physician's overall best,
+    possibly in different years. The panel flag cannot see these.
+
+  `best_is_tied` counts *distinct voters*, not rows. Counting rows would wrongly flag the
+  common and entirely unambiguous case of the same voter matching equally well in several
+  years.
+
+  `physician_matches` still emits exactly one row per NPI. The tie is broken
+  deterministically by `LALVOTERID` then `year`, both ascending — arbitrary, but
+  reproducible, which is what matters. `year` is in the key so a voter matching equally well
+  across years yields a stable `best_year`. Do not replace this with `which.max()`: it
+  silently takes the first maximum and flags nothing.
 - **`mover` means the best-matching voter changed between years — nothing more.** That is
   consistent with a genuine move, and equally with two similar voters trading places
   because of scoring noise. It is a flag to investigate, not a finding.

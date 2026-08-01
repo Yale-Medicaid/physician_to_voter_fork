@@ -243,10 +243,11 @@ cat("\n== physician_year_panel / reconcile_physician_matches ==\n")
 for (y in c(2018L, 2019L)) {
   dir.create(file.path("scored", paste0("year=", y)), recursive = TRUE, showWarnings = FALSE)
   rows <- tibble(
-    npi = c(21, 21, 22, 24, 24, 25),
-    LALVOTERID = c("V21", "V21b", if (y == 2018) "V22a" else "V22b", "V24a", "V24b", "V25"),
-    match_prob = c(0.90, 0.30, 0.80, 0.60, 0.60, 0.70),
-    state_agree = c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
+    npi = c(21, 21, 22, 24, 24, 25, 26),
+    LALVOTERID = c("V21", "V21b", if (y == 2018) "V22a" else "V22b", "V24a", "V24b", "V25",
+                   if (y == 2018) "V26a" else "V26b"),
+    match_prob = c(0.90, 0.30, 0.80, 0.60, 0.60, 0.70, 0.85),
+    state_agree = c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, TRUE),
     zip_dist = 5, full_name_sim = 0.95, n = 2L
   )
   if (y == 2018) rows <- bind_rows(rows, tibble(npi = 23, LALVOTERID = "V23",
@@ -275,7 +276,28 @@ ok("a physician present in only one year is NOT flagged as a mover",
    !rd$mover[rd$npi == 23])
 ok("...and its missing year shows as n_years_matched, not as a failure",
    rd$n_years_matched[rd$npi == 23] == 1)
-ok("tie is carried through to the physician level", rd$any_tied[rd$npi == 24])
+ok("within-year tie is carried to the physician level", rd$any_tied_in_year[rd$npi == 24])
+ok("CROSS-YEAR tie is flagged -- the panel flag cannot see these",
+   rd$best_is_tied[rd$npi == 26] && !rd$any_tied_in_year[rd$npi == 26])
+ok("the SAME voter matching equally well in two years is not a tie",
+   !rd$best_is_tied[rd$npi == 21])
+ok("...and its best_year is stable, not arbitrary", rd$best_year[rd$npi == 21] == 2018)
+ok("a tied physician still yields exactly one row", sum(rd$npi == 26) == 1)
+
+# determinism: shuffling the input must not change which voter is chosen
+set.seed(99)
+dir.create("scored_shuf/year=2018", recursive = TRUE, showWarnings = FALSE)
+dir.create("scored_shuf/year=2019", recursive = TRUE, showWarnings = FALSE)
+for (y in c(2018L, 2019L)) {
+  src <- open_dataset(file.path("scored", paste0("year=", y))) |> collect()
+  write_parquet(slice_sample(src, prop = 1), file.path("scored_shuf", paste0("year=", y), "p.parquet"))
+}
+rd2 <- reconcile_physician_matches(
+  physician_year_panel(file.path("scored_shuf", paste0("year=", c(2018L, 2019L))),
+                       out_pth = "panel_shuf"),
+  out_pth = "matches_shuf") |> open_dataset() |> collect()
+ok("tie-break is deterministic under shuffled input",
+   identical(arrange(rd, npi)$best_LALVOTERID, arrange(rd2, npi)$best_LALVOTERID))
 ok("cross-border best match is flagged", rd$best_cross_border[rd$npi == 25])
 ok("in-state best match is not", !rd$best_cross_border[rd$npi == 21])
 ok("no match_prob cutoff is applied -- weak matches still appear",
