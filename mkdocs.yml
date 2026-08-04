@@ -1,5 +1,18 @@
 site_name: Physician to Voter Documentation
 theme:
   name: material
+nav:
+  - Home: index.md
+  - Methodology: methodology.md
+  - Pipeline steps: pipeline_steps.md
+  - Instructions: instructions.md
+  - Dependency graph: dependency_graph.md
 markdown_extensions:
   - admonition
+  - tables
+  # mermaid support, for the diagrams in methodology.md and dependency_graph.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
