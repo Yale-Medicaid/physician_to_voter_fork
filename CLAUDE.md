@@ -618,7 +618,23 @@ Output is partitioned `year=/state=`, so each matching branch prunes to one dire
 instead of scanning nationally 408 times.
 
 ## Tests
-`tests/test_l2_and_geography.R` — **140 checks** over the L2 partition helpers, the state
+Two scripts. Run both from the repo root:
+
+```bash
+Rscript tests/test_l2_and_geography.R   # 145 checks -- units
+Rscript tests/test_end_to_end.R         # 37 checks  -- integration
+```
+
+`tests/test_end_to_end.R` chains every stage on the **real** output of the one before it:
+`physician_data` → Stage A → Stage B → `score_pairs` → panel → matches → gap fill. It exists
+because the unit file hand-builds each stage's input, so no test there covers a *handoff* —
+`score_pairs()` could emit a column `physician_year_panel()` does not expect, or a type arrow
+refuses to unify on re-read, and nothing would notice until the HPC run. Its fixture omits
+NY/2019 so the missing-partition guard and a Tier 1 gap are both exercised.
+
+It also found the progress-noise problem below.
+
+`tests/test_l2_and_geography.R` — **145 checks** over the L2 partition helpers, the state
 adjacency table, the cross-border physician selector, the NPPES URL table and taxonomy
 union, and the panel gap filler. Run from the repo root:
 
@@ -988,6 +1004,26 @@ branch per state-year`), matching the reference repo, plus the `packages = "grf"
 **Reasoning belongs here, not in the code.** Every explanation removed was already recorded
 in this file — that is what made the deletion safe, and it is the standing division of
 labour. If a future change needs justifying, write it here and leave the code clean.
+
+## Scoping a run — `P2V_YEARS` / `P2V_STATES`
+`pipeline_years()` and `pipeline_states()` in `R/helpers.R` default to the full 2018–2025 × 51
+grid and are overridden by comma-separated environment variables. `small_submit.sh` sets them
+rather than editing `_targets.R`, which removes a real footgun: a scoped-down `_targets.R` left
+in place means a later "full" run quietly is not one.
+
+**`cue = targets::tar_cue(mode = "always")` on `years` and `states` is load-bearing.** Without
+it the command is unchanged between runs, so targets reuses the cached value and the
+environment variable is *silently ignored*. Verified both ways — with the cue an override
+propagates downstream and unsetting returns to the full grid; without it, nothing happens.
+
+### ⚠ zoomerjoin's `progress` must stay FALSE for real runs
+`jaccard_inner_join(progress = TRUE)` emits one line per band. At `n_bands = 400`, two joins
+per branch, 408 branches and two passes, that is roughly **650,000 lines** into
+`job_outputs/` — enough to bury any real error. It is now a `progress` argument defaulting to
+`FALSE`, threaded through `locality_sensitive_hash()` / `lsh_cross_border()` / `match_pairs()`,
+so it can be switched on for one partition while debugging.
+
+Caught by the integration test producing 3268 lines of output for 37 checks; 52 afterwards.
 
 ## Parallelism — two crew controllers, and concurrency is a product
 `_targets.R` defines `controller_primary` (1 worker) and `controller_max`
