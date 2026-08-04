@@ -25,5 +25,10 @@ jobs:
           path: .cache
           restore-keys: |
             mkdocs-material-
-      - run: pip install mkdocs-material
+      # Bounded below 10: mkdocs-material 9.x pins mkdocs<2 itself, so MkDocs 2.0 cannot
+      # arrive transitively -- but a material 10.x release could adopt it, and upstream has
+      # said 2.0 removes the plugin system and rewrites theming with no migration path.
+      # Minor and patch updates still flow through, so fixes are not blocked.
+      - run: pip install "mkdocs-material>=9.7,<10"
+      - run: mkdocs build --strict
       - run: mkdocs gh-deploy --force
