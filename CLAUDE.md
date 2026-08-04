@@ -672,6 +672,8 @@ compatibility fixes in `fix/current-package-compat`:
 | Package | Validated | Old lock | Used by |
 | --- | --- | --- | --- |
 | `targets` | 1.12.0 | 1.7.0 | pipeline |
+| `crew` | 1.3.1 | — | worker controllers |
+| `parallelly` | 1.48.0 | — | `availableCores()`, reads `SLURM_CPUS_PER_TASK` |
 | `tarchetypes` | 0.14.1 | 0.9.0 | pipeline |
 | `arrow` | 25.0.0 | 16.1.0 | L2 parquet read/write |
 | `zoomerjoin` | 0.2.3 | 0.1.4 | LSH blocking (in-house pkg) |
@@ -985,6 +987,57 @@ branch per state-year`), matching the reference repo, plus the `packages = "grf"
 **Reasoning belongs here, not in the code.** Every explanation removed was already recorded
 in this file — that is what made the deletion safe, and it is the standing division of
 labour. If a future change needs justifying, write it here and leave the code clean.
+
+## Parallelism — two crew controllers, and concurrency is a product
+`_targets.R` defines `controller_primary` (1 worker) and `controller_max`
+(`n_workers`), grouped with `crew::crew_controller_group()`. The fan-out targets
+(`l2_extracts`, `physician_data`, `lsh_pairs`, `cross_border_pairs`) carry
+`resources = on_max`; everything that materialises a whole year stays on primary.
+
+**NPPES downloads deliberately stay on primary.** They are one-time and idempotent, so
+parallelism buys almost nothing, and NBER already 403s some requests.
+
+**Concurrency is `n_workers * lsh_nthread`, not either number alone.** Every crew worker
+running an LSH join spawns its own Rayon pool, so the old `Sys.setenv(RAYON_NUM_THREADS = 30)`
+meant N workers × 30 threads on the node. `nthread` is now an argument threaded through
+`locality_sensitive_hash()` / `lsh_cross_border()` / `match_pairs()` to
+`zoomerjoin::jaccard_inner_join()`, and `n_workers` derives from it, so the product cannot
+drift. `nthread = 1` because 408 independent branches make branch parallelism the better use
+of cores — unverified against real data, so revisit after the pilot.
+
+`nthread = NULL` (zoomerjoin's default) means Rayon's global pool, i.e. every logical core.
+That is the wrong default here for exactly the reason above.
+
+### ⚠ `seconds_interval = 3` cost 92× on the 408-branch fan-out
+Measured, not guessed. Smoke-tested `l2_extracts` with no L2 present so every branch returns
+`NULL`:
+
+| `seconds_interval` | wall clock | max branch | branches > 10s |
+| --- | --- | --- | --- |
+| 3 (the reference repo's value) | **920s** | 903s | 2 |
+| crew's default 0.25 | **10s** | 0.1s | 0 |
+
+Two branches stalled ~903s each under the 3s interval while the median branch took 0.03s.
+A standalone `crew` benchmark pushing 200 trivial tasks did **not** reproduce it, so the cost
+comes from how `targets` dispatches through a `crew_controller_group`, not from crew's own
+push/wait loop — worth knowing, because it means micro-benchmarking crew in isolation will not
+surface this class of problem.
+
+`treated-by-thy-neighbor` uses 3s because its targets run for minutes each, where the poll
+interval is irrelevant. Do not copy it into a wide fan-out. `seconds_launch = 90` is kept,
+well above crew's default of 30, because R startup on a loaded HPC node is genuinely slow.
+
+### Memory, not CPU, is the binding constraint on the full run
+`read_l2_partition()` `collect()`s an entire state-year voter file into R, and
+`crew_controller_local` workers are processes on one node. Peak memory is therefore roughly
+`--cpus-per-task * (largest state-year partition)`. Raising cores without raising `--mem` is
+how the job gets OOM-killed on California. Nothing has measured this yet — it is the main
+thing `small_submit.sh` exists to find out.
+
+`submit.sh` and `small_submit.sh` are at the repo root, following the reference repo's shape.
+`job_outputs/` is now tracked via `.gitkeep`: it was gitignored with nothing in it, so a fresh
+clone lacked the directory and `sbatch --output` fails outright when its directory is missing,
+before R starts.
 
 ### Roxygen: `@param`/`@return` in full, `@description` in two or three sentences
 Cut from 579 lines to 359 against 912 lines of code. Every `@param` and `@return` was kept —
