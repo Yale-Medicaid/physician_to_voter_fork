@@ -22,6 +22,33 @@ ok <- function(label, cond) {
   cat(sprintf("  [%s] %s\n", if (cond) "ok" else "FAIL", label))
 }
 
+## ------------------------------------------------------- namespacing guard
+## `tar_option_set()` declares no project-wide packages, so every call in R/ must be
+## namespaced or base. This file attaches tidyverse for its own convenience, which means a
+## bare dplyr call works *here* and still dies in a crew worker. Not hypothetical: bare
+## `n()`, a bare `read_parquet` passed to purrr::map(), and bare `replace_na()`/`year()` all
+## shipped that way, and no test in this file could have caught them.
+##
+## codetools rather than grep for a list of names: findGlobals(merge = FALSE)$functions
+## reports call-position symbols only, so this is complete instead of being limited to
+## whatever names someone remembered to enumerate. Column names in a data mask are variables,
+## not functions, so they do not show up.
+cat("== namespacing (R/ must not depend on attached packages) ==\n")
+project_fns <- ls(envir = .GlobalEnv)
+baseish <- unlist(lapply(c("base", "stats", "utils", "methods", "graphics", "grDevices",
+                           "tools"), \(p) ls(getNamespace(p))))
+foreign_calls <- function(nm) {
+  f <- get(nm, envir = .GlobalEnv)
+  if (!is.function(f)) return(character(0))
+  g <- codetools::findGlobals(f, merge = FALSE)$functions
+  setdiff(g[!grepl("::", g)], c(project_fns, baseish))
+}
+unnamespaced <- Filter(length, sapply(project_fns, foreign_calls, simplify = FALSE))
+ok("every call in R/ is namespaced or base", length(unnamespaced) == 0)
+for (nm in names(unnamespaced)) {
+  cat(sprintf("      %s: %s\n", nm, paste(unnamespaced[[nm]], collapse = ", ")))
+}
+
 # Build a physician dataset in the NBER `core` schema. Used by several sections below.
 make_phys <- function(npi, first, mid, last, state, zip, year = 2018, tag = "p") {
   # named for the newest vintage so read_taxonomy_union() recognises it

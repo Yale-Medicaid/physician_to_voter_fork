@@ -1,8 +1,7 @@
 #' Return an output path, or NULL if nothing was written
 #'
-#' @description Targets in this pipeline pass paths rather than data, so a function that
-#' had nothing to write must hand back `NULL` rather than a path to a directory that does
-#' not exist. Ending a writing function with this makes that automatic.
+#' @description Targets pass paths, so a function with nothing to write must return `NULL`
+#' rather than a path that does not exist.
 #'
 #' @param out_pth path the caller intended to write
 #'
@@ -60,7 +59,8 @@ check_for_distinct_result <- function(out_pth, distinct_col) {
       FALSE,
       msg = cli::format_error(c(
         "Result must be distinct in {.var {distinct_col}}",
-        "x" = "Result has {.pkg {scales::comma(n_rows)}} rows but only {.pkg {scales::comma(n_distinct)}} distinct combination{?s}",
+        "x" = paste("Result has {.pkg {scales::comma(n_rows)}} rows but only",
+                    "{.pkg {scales::comma(n_distinct)}} distinct combination{?s}"),
         ">" = "{.file {out_pth}}"
       ))
     ))

@@ -1,13 +1,7 @@
 #' Resolve the latest L2 extract for one state-year
 #'
-#' @description L2 is partitioned `state=XX/year=YYYY/month=MM/day=DD`, where a single
-#' `state=/year=` directory may hold several `month=/day=` subdirectories -- one per
-#' extract date. Opening a dataset scoped at the `state=/year=` level would silently
-#' union those distinct extracts together, so this resolves the single latest one and
-#' returns only that leaf.
-#'
-#' Some state-years have no directory at all (currently 2024 MD, MS and NV). That is
-#' absence of data, not an error, so it returns `NULL` and the branch drops out.
+#' @description Returns a single `month=/day=` leaf. Scoping a dataset at `state=/year=`
+#' would silently union several extract dates together.
 #'
 #' @param state two-letter state abbreviation
 #' @param year four-digit year
@@ -23,7 +17,6 @@ resolve_l2_extract <- function(state, year, l2_path) {
     return(NULL)
   }
 
-  # recurse = 1 reaches month=/day=; keep only the day= leaves
   leaves <- fs::dir_ls(stub, recurse = 1, type = "directory") |>
     as.character()
   leaves <- leaves[stringr::str_detect(basename(leaves), "^day=")]
@@ -50,9 +43,8 @@ parse_l2_extract_date <- function(leaf) {
 
 #' Pull the state out of an L2 path
 #'
-#' @description Note L2 nests `state=` *outside* `year=`, the reverse of the layout
-#' this project writes its own derived data in. Position-based helpers borrowed from
-#' elsewhere will therefore read L2 paths wrong; these parse by key instead.
+#' @description Parses by key, not position: L2 nests `state=` outside `year=`, the reverse
+#' of this project's own output.
 #'
 #' @param leaf one or more L2 paths
 #'
@@ -72,10 +64,7 @@ get_l2_year <- function(leaf) {
 
 #' Build the output subdirectory for one L2 partition
 #'
-#' @description Flips the partition order. L2 arrives as `state=XX/year=YYYY`; everything
-#' this project writes is `year=YYYY/state=XX`, matching the house convention. Doing the
-#' flip in one named place keeps it from being silently re-derived (or reversed) at each
-#' call site.
+#' @description Flips `state=/year=` to `year=/state=`. The single place that flip happens.
 #'
 #' @param leaf an L2 leaf path
 #'
@@ -86,9 +75,7 @@ build_l2_out_subdir <- function(leaf) {
 
 #' Name of the L2 occupation column for a given year
 #'
-#' @description L2 renamed its commercial fields to consumer ones between 2024 and 2025.
-#' Only occupation has been verified in detail, and the *values* are unchanged across the
-#' cutover, so this is a pure column rename with no value mapping.
+#' @description A pure rename between 2024 and 2025; the value set is unchanged.
 #'
 #' @param year four-digit year
 #'
@@ -104,44 +91,17 @@ l2_occupation_col <- function(year) {
 #' Physicians in a state-year with no strong in-state candidate
 #'
 #' @description Selects who the cross-border pass should try. A physician is exempted only
-#' if Stage A found them **exactly one** strong in-state candidate -- a single voter at or
-#' above `min_name_sim`. Everyone else is retried:
-#'
-#' | Strong in-state candidates | Retried? | Why |
-#' |---|---|---|
-#' | 0 (or no candidates at all) | yes | nothing found in state |
-#' | exactly 1 | **no** | unambiguous in-state match |
-#' | 2 or more | yes | ambiguous -- a common name may have several same-state residents, none of them the right person |
-#'
-#' Requiring uniqueness rather than just a high maximum is what closes the common-name
-#' hole: a dozen in-state voters all scoring 0.99 is not evidence of a match, it is
-#' evidence of a common name.
-#'
-#' Defined without reference to the model, deliberately. Using `match_prob` would be
-#' circular, since `n` -- and therefore the prediction -- is only correct once a year's
-#' states are combined, which happens downstream of this step.
-#'
-#' Deliberately model-free. Defining it by RF probability would be circular, since `n` --
-#' and therefore the prediction -- is only correct after a year's states are combined,
-#' which happens downstream of this step.
+#' when Stage A found **exactly one** candidate at or above `min_name_sim`; zero or several
+#' both mean retry. Requiring uniqueness rather than a high maximum is what closes the
+#' common-name hole. Deliberately model-free -- using `match_prob` would be circular, since
+#' `n` is only correct once a year's states are combined. See CLAUDE.md.
 #'
 #' @param physician_data path to the cleaned physician dataset
 #' @param lsh_pairs paths to the Stage A candidate pair datasets
 #' @param state,year the state-year being processed
-#' @param min_name_sim name-similarity an in-state candidate must beat for the physician to
-#'   be considered already matched and skipped. Defaults to 0.85: only a *strong* in-state
-#'   name match buys an exemption, because excluding someone on a mediocre in-state hit is
-#'   the one error here that cannot be recovered downstream. Over-including is cheap by
-#'   comparison -- an extra candidate pair costs compute, and the RF ranks it away.
-#'
-#'   This is really a compute/recall dial. At 0.7 (the LSH threshold) only physicians with
-#'   no in-state candidate at all are retried; at 1.0 essentially everyone is, which is the
-#'   same as always running the cross-border pass and skipping this selection entirely.
-#'
-#'   Note the limit of a similarity-only rule: a common name can yield many in-state
-#'   candidates all scoring 0.99, none of them the right person, and this rule will still
-#'   grant the exemption. Name similarity is not match quality -- that is what the RF is
-#'   for, and it cannot be used here without circularity.
+#' @param min_name_sim similarity an in-state candidate must beat to buy an exemption. A
+#'   compute/recall dial: at the LSH threshold of 0.7 only physicians with no candidate at
+#'   all are retried, at 1.0 essentially everyone is.
 #'
 #' @return a data frame of physician rows still wanting a match, or `NULL` if none
 unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
@@ -154,17 +114,12 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
     return(NULL)
   }
 
-  # Count the STRONG in-state candidates per physician. Stage A may have produced
-  # nothing for this state-year at all.
   strong <- if (rlang::is_empty(lsh_pairs)) {
     tibble::tibble(npi = phys$npi[0], n_strong = integer(0))
   } else {
     arrow::open_dataset(unique(dirname(dirname(lsh_pairs)))) |>
-      # !! injects the argument's *value*, disambiguating it from the identically named
-      # hive partition columns. Not {{ }}: the embrace injects the argument *expression*,
-      # so a caller passing a local also called `year` would inject the symbol, the data
-      # mask would resolve it to the column, and `year == year` would match every row.
-      # This worked only because lsh_cross_border() happens to pass `this_year`.
+      # !! not {{ }}: the embrace would inject the symbol, which the data mask resolves
+      # to the identically named hive column, making the filter match every row
       dplyr::filter(year == !!year, state == !!state) |>
       dplyr::filter(full_name_sim >= min_name_sim) |>
       dplyr::count(npi, name = "n_strong") |>
@@ -173,8 +128,6 @@ unmatched_physicians <- function(physician_data, lsh_pairs, state, year,
 
   out <- phys |>
     dplyr::left_join(strong, by = dplyr::join_by(npi)) |>
-    # exempt only the unambiguous case: exactly one strong candidate. NA means no strong
-    # candidate at all (or no candidate at all), which is retried.
     dplyr::filter(is.na(n_strong) | n_strong != 1) |>
     dplyr::select(-n_strong)
 

@@ -161,10 +161,12 @@ if used:**
     read into the parquet but never referenced anywhere.
   - **`OccupationIndustry` disappearing in 2025+ is therefore moot** — nothing
     consumes it. It becomes a decision only if someone adds it as a feature.
-  - **Still to implement:** the rename itself. Deferred alongside the L2 parquet
-    source refactor, since that changes where L2 columns are selected and doing it
-    now would mean writing it twice. Note the code has no year dimension at all
-    today, so there is currently nowhere to branch on year.
+  - **Implemented.** `l2_occupation_col(year)` in `R/l2.R` returns the year's column name,
+    and `read_l2_partition()` canonicalises it to `CommercialData_Occupation` at
+    `R/locality_sensitive_hash.R:97,105` via `dplyr::rename(... = dplyr::any_of(occ_col))`.
+    `any_of()` rather than `all_of()` deliberately, so a year missing the column does not
+    error — though note that also means a *future* rename would fail silently, with every
+    occupation-derived column coming out empty rather than erroring.
 - Broader pattern: most `CommercialData_*` (2018) fields were renamed to
   `ConsumerData_*` (2025) — this is a wide, systemic rename. Only occupation
   has been checked in detail; other `CommercialData_*`/`ConsumerData_*` fields
@@ -615,7 +617,7 @@ Output is partitioned `year=/state=`, so each matching branch prunes to one dire
 instead of scanning nationally 408 times.
 
 ## Tests
-`tests/test_l2_and_geography.R` — **139 checks** over the L2 partition helpers, the state
+`tests/test_l2_and_geography.R` — **140 checks** over the L2 partition helpers, the state
 adjacency table, the cross-border physician selector, the NPPES URL table and taxonomy
 union, and the panel gap filler. Run from the repo root:
 
@@ -941,8 +943,102 @@ because I wrote it.
     by = dplyr::join_by(npi, year)
   )
   ```
-- **Native `|>` only.** Zero `%>%` in the reference repo; this project still has many.
-- **Spaces, never tabs**, at 2 per level.
+- **Native `|>` only.** Zero `%>%` in the reference repo.
+- **Spaces, never tabs**, at 2 per level. `.Rproj` sets `NumSpacesForTab: 2`, so the old
+  tab-indented files converted faithfully with `expand -t2`.
+- **Tribble columns are not aligned either** — single space after each comma, and `~ "col"`
+  with a space after the tilde. Alignment there is still alignment.
+- **Line width is loose 80**: rewrap only what exceeds 100, and bring it under 80. Lines
+  between 81 and 100 stay as they are. Two exemptions, both because wrapping would do
+  damage: markdown table rows inside roxygen blocks (it breaks the rendering) and the
+  `l2_path` string literal in `_targets.R` (a string cannot be broken without changing it).
+
+Applied across `R/` and `_targets.R` in `refactor/style-pass`. Two traps found doing it:
+
+- **Adding a namespace moves the opening parenthesis**, so every paren-aligned continuation
+  silently goes out of alignment by the length of the prefix. Six needed re-indenting.
+  `scratchpad/align.pl`-style checking (compare each continuation's indent to the column
+  after the innermost unclosed `(`) is the only reliable way to catch them; note the checker
+  must mask string *contents* without changing their length, or it reports false positives.
+- **`pattern = map(...)` and `pattern = cross(...)` are targets' branching DSL, not purrr.**
+  A blanket namespacing pass will rewrite them to `purrr::map()` and break branching
+  entirely. They must stay bare.
+
+### In-body comments: only where they prevent a wrong edit
+No inline commentary explaining what the code does. A comment inside a function body earns
+its place only by stopping a specific, plausible "fix" that would break something — and the
+reason must not be visible from the code itself. Everything else goes.
+
+Cut from 138 lines to 31 across `R/` and `_targets.R`. For calibration,
+`treated-by-thy-neighbor` carries 33 in-body comments across 3270 lines of code, and most of
+those are commented-out code rather than prose.
+
+The eleven that survived in `R/` are all of one kind — a trap with a named failure mode:
+`by` being required by CRAN zoomerjoin, `block_by = "mi"` carrying the middle-initial
+agreement, `coalesce` before `nchar`, the 2-gram width being deliberate, `!!` not `{{ }}`
+(twice), dropping `year` before writing to a `year=` directory, arrow's unstable `distinct()`
+ordering, `n_distinct()` counting `NA`, the int64/double unification, and the `asin()` clamp.
+
+`_targets.R` keeps only short section labels (`# Stage A -- in-state candidate pairs, one
+branch per state-year`), matching the reference repo, plus the `packages = "grf"` note.
+
+**Reasoning belongs here, not in the code.** Every explanation removed was already recorded
+in this file — that is what made the deletion safe, and it is the standing division of
+labour. If a future change needs justifying, write it here and leave the code clean.
+
+### Roxygen: `@param`/`@return` in full, `@description` in two or three sentences
+Cut from 579 lines to 359 against 912 lines of code. Every `@param` and `@return` was kept —
+they are the only record of what the arguments mean. The `@description` blocks lost their
+prose: the reasoning belongs in this file, and repeating it above the function meant
+maintaining it in three places (here, roxygen, in-body comment) and letting all three drift.
+
+Where a decision needs justifying, the block now says so and points here. For calibration,
+`treated-by-thy-neighbor` carries 10 roxygen lines across 3270 lines of code, in one file of
+twenty; this project is far more documented than that even after the cut.
+
+### ⚠ Dropping `packages` breaks bare calls that no test here can catch
+Removing the project-wide `packages` argument means **every** call in `R/` must be namespaced
+or base. Four sites shipped bare and would have died on the first real run:
+
+- `n()` inside `dplyr::summarize()`/`mutate()` — dplyr does **not** put `n` in the data mask.
+  It fails with `could not find function "n"`. Now `dplyr::n()`.
+- `read_parquet` passed *as a value* to `purrr::map()` — no parentheses, so no regex looking
+  for `name(` will ever find it. Now `arrow::read_parquet`.
+- `replace_na()` and `year()` in `match_pairs()` — tidyr and lubridate. `replace_na` was also
+  against this file's own rule, so it became `dplyr::coalesce()`; `year` became
+  `lubridate::year()`.
+
+`tidyselect::where()` inside `dplyr::across()` is the one case that works bare, because
+tidyselect supplies it in the selection context. Namespaced anyway for consistency.
+
+**The test suite cannot catch this by running the code**, because it does
+`library(arrow); library(tidyverse)` for its own convenience — so a bare dplyr call works
+there and still dies in a crew worker. The guard at the top of
+`tests/test_l2_and_geography.R` therefore uses `codetools::findGlobals(merge = FALSE)$functions`
+to enumerate call-position symbols and diff them against project functions plus the base
+packages. Complete by construction, unlike a list of remembered names — which is exactly how
+`replace_na` and `year` survived the first attempt. Verified to fail when a bare call is
+injected.
+
+### ⚠ `packages = "grf"` on `scored_pairs` is load-bearing
+`tar_option_set()` no longer takes a project-wide `packages` argument, because everything in
+`R/` is namespaced. There is exactly **one** exception, declared per-target on `scored_pairs`.
+
+`score_pairs()` calls `predict()` on an `rf_model` built in a *different* target. S3 dispatch
+needs `predict.probability_forest`, which is registered only once grf is loaded — and nothing
+in that target calls `grf::` itself, so the namespace would never load. Verified by
+reproducing the failure in a fresh session:
+
+```
+no applicable method for 'predict' applied to an object of class
+c('probability_forest', 'grf')
+```
+
+This is the general hazard with dropping `packages`: namespacing fixes *calls*, but not **S3
+dispatch on a class that crosses a target boundary**. Anything else added later that returns
+a classed object from one target and dispatches on it in another needs the same treatment.
+`arrow` is fine by luck — its dplyr methods are registered because the same function also
+calls `arrow::open_dataset()`.
 
 ## Git workflow
 - **Never commit directly to `main`.** Always work on a feature branch.
