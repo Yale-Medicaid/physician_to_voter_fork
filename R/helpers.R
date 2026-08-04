@@ -68,3 +68,37 @@ check_for_distinct_result <- function(out_pth, distinct_col) {
 
   TRUE
 }
+
+
+#' Years the pipeline should build
+#'
+#' @description Defaults to the full panel. `P2V_YEARS` overrides it with a comma-separated
+#' list, so a pilot run can be scoped without editing `_targets.R` -- and without the risk of
+#' leaving it scoped and later running a "full" run that quietly is not.
+#'
+#' The `years` target must carry `tar_cue(mode = "always")` for this to work. Without it the
+#' command is unchanged between runs, so targets reuses the cached value and the environment
+#' variable is silently ignored. Verified both ways.
+#'
+#' @return integer vector of years
+pipeline_years <- function() {
+  v <- Sys.getenv("P2V_YEARS", "")
+  if (!nzchar(v)) {
+    return(2018:2025)
+  }
+  as.integer(trimws(strsplit(v, ",", fixed = TRUE)[[1]]))
+}
+
+#' States the pipeline should build
+#'
+#' @description Defaults to the 50 states plus DC. `P2V_STATES` overrides it, as
+#' `pipeline_years()` does for years; the same `tar_cue(mode = "always")` requirement applies.
+#'
+#' @return character vector of two-letter abbreviations
+pipeline_states <- function() {
+  v <- Sys.getenv("P2V_STATES", "")
+  if (!nzchar(v)) {
+    return(sort(c(state.abb, "DC")))
+  }
+  toupper(trimws(strsplit(v, ",", fixed = TRUE)[[1]]))
+}

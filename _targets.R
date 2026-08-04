@@ -44,12 +44,16 @@ on_max <- targets::tar_resources(
 
 list(
   # the state-year grid
+  # tar_cue(always) is required, not tidiness: without it the command is unchanged between
+  # runs, so targets reuses the cached value and P2V_YEARS / P2V_STATES are silently ignored.
   targets::tar_target(years,
-                      2018:2025,
-                      iteration = "vector"),
+                      pipeline_years(),
+                      iteration = "vector",
+                      cue = targets::tar_cue(mode = "always")),
   targets::tar_target(states,
-                      sort(c(state.abb, "DC")),
-                      iteration = "vector"),
+                      pipeline_states(),
+                      iteration = "vector",
+                      cue = targets::tar_cue(mode = "always")),
   targets::tar_target(l2_extracts,
                       resolve_l2_extract(states, years, l2_path),
                       pattern = cross(years, states),

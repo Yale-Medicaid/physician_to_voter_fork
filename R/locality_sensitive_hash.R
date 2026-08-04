@@ -124,12 +124,16 @@ read_l2_partition <- function(l2_extract) {
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
 #' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
 #'   logical core -- which oversubscribes badly once several crew workers each do it.
+#' @param progress zoomerjoin's per-band progress output. `FALSE` by default: it emits one
+#'   line per band, so 400 bands x 2 joins x 408 branches x 2 passes is ~650,000 log lines,
+#'   which buries any real error in `job_outputs/`.
 #'
 #' @return a frame of candidate pairs with comparison features, or `NULL` if either side is
 #'   empty or no pairs were found
 match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                         n_gram_width = 3, band_width = 7,
-                        n_bands = 400, threshold = 0.7, nthread = NULL) {
+                        n_bands = 400, threshold = 0.7, nthread = NULL,
+                        progress = FALSE) {
   if (nrow(phys_data) == 0 || nrow(voter_dataset) == 0) {
     return(NULL)
   }
@@ -143,7 +147,7 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                                                n_bands = n_bands,
                                                threshold = threshold,
                                                nthread = nthread,
-                                               clean = TRUE, progress = TRUE)
+                                               clean = TRUE, progress = progress)
 
   # block_by = "mi" carries the middle-initial *agreement* requirement. Dropping it would
   # match first+last across all middle initials; the post-filter below is not a substitute.
@@ -156,7 +160,7 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                                                n_bands = n_bands,
                                                threshold = threshold,
                                                nthread = nthread,
-                                               clean = TRUE, progress = TRUE) |>
+                                               clean = TRUE, progress = progress) |>
     # coalesce before nchar(): nchar(NA) is NA, and filter() drops NA rows
     dplyr::filter(nchar(dplyr::coalesce(Voters_MiddleName, "")) <= 1 |
                     nchar(dplyr::coalesce(mid_nm, "")) <= 1)
@@ -232,6 +236,9 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
 #' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
 #'   logical core -- which oversubscribes badly once several crew workers each do it.
+#' @param progress zoomerjoin's per-band progress output. `FALSE` by default: it emits one
+#'   line per band, so 400 bands x 2 joins x 408 branches x 2 passes is ~650,000 log lines,
+#'   which buries any real error in `job_outputs/`.
 #'
 #' @return `out_pth` -- candidate pairs for this state-year, one row per
 #'   (npi, LALVOTERID), or `NULL`
@@ -239,7 +246,7 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
                                     out_pth = "trunk/derived/lsh_pairs/{ys}",
                                     n_gram_width = 3, band_width = 7,
                                     n_bands = 400, threshold = 0.7,
-                                    nthread = NULL) {
+                                    nthread = NULL, progress = FALSE) {
   if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
     return(NULL)
   }
@@ -257,7 +264,7 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
     prepare_physicians()
 
   pairs <- match_pairs(phys_data, read_l2_partition(l2_extract), zip_centroid_file,
-                       n_gram_width, band_width, n_bands, threshold, nthread)
+                       n_gram_width, band_width, n_bands, threshold, nthread, progress)
 
   if (rlang::is_empty(pairs)) {
     return(NULL)
@@ -286,6 +293,9 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
 #' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
 #'   logical core -- which oversubscribes badly once several crew workers each do it.
+#' @param progress zoomerjoin's per-band progress output. `FALSE` by default: it emits one
+#'   line per band, so 400 bands x 2 joins x 408 branches x 2 passes is ~650,000 log lines,
+#'   which buries any real error in `job_outputs/`.
 #'
 #' @return `out_pth` -- cross-border candidate pairs, or `NULL` if there were none.
 #'   Partitioned by the *physician's* state-year, not the voter's, so all of a physician's
@@ -296,7 +306,7 @@ lsh_cross_border <- function(physician_data, l2_extract, lsh_pairs, l2_path,
                              min_name_sim = 0.85,
                              n_gram_width = 3, band_width = 7,
                              n_bands = 400, threshold = 0.7,
-                             nthread = NULL) {
+                             nthread = NULL, progress = FALSE) {
   if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
     return(NULL)
   }
@@ -327,7 +337,7 @@ lsh_cross_border <- function(physician_data, l2_extract, lsh_pairs, l2_path,
       }
 
       match_pairs(phys_data, read_l2_partition(nb_extract), zip_centroid_file,
-                  n_gram_width, band_width, n_bands, threshold, nthread)
+                  n_gram_width, band_width, n_bands, threshold, nthread, progress)
     }) |>
     purrr::compact() |>
     purrr::list_rbind()
