@@ -224,27 +224,28 @@ by the existing code.
 *Filled in from the read-only pass (2026-07-30). Reflects actual structure, which
 differs substantially from the placeholder's assumptions — see "does not exist" below.*
 
-- `_targets.R` — pipeline definition (root). **9 targets** (was 10; `dt_match_data`
-  went with the flow-diagram matcher), no target factories, no `_targets.yaml`, no
-  `tar_map`/branching. `source()`s four `R/*.R` files; `match_diagnostics.R` is
-  commented out. Note: uses `library(targets)` + bare `tar_target()`, not the
-  namespaced style this file prescribes elsewhere — not yet reconciled.
-- `physician_to_voter.Rproj` — RStudio project file. Tabs, not spaces, matching
-  the existing code.
-- `R/` — all target functions plus standalone scripts, flat, **unnumbered**. The
-  old `code/` directory and its `0N_` prefixes are gone.
-  - `unzip_l2.R` — standalone, NOT a target. Unzips L2 from a mounted Yale
-    `B:/` network drive into `trunk/raw/rawl2/`. Hardcoded to **2018 only**.
-  - `extract_l2.R` — `process_voter_data()`; TSV → parquet conversion.
-  - `clean_physician_data.R` — `clean_physician_data()`; NPPES+CMS+NUCC merge.
-  - `locality_sensitive_hash.R` — `locality_sensitive_hash()`; zoomerjoin LSH
-    blocking + comparison-feature construction.
-  - `random_forest.R` — `make_X_matrix()` + `add_rf_match_predictions_to_df()`;
-    **the only matching method.** `grf::probability_forest`.
-  - `make_training_data.R` — standalone; samples LSH output into labeller
-    partitions + writes two rule-labelled files.
-  - `label.R` — standalone; interactive CLI hand-labelling + inter-coder kappa.
-  - `match_diagnostics.R` — `make_match_diagnostic_plots()`; sourced-out/inactive.
+- `_targets.R` — pipeline definition (root). **19 targets**, no target factories and no
+  `_targets.yaml`; the whole graph stays in this one file. Loads `R/` with
+  `targets::tar_source()`, defines the two crew controllers at the top, and namespaces
+  every `targets::` call.
+- `physician_to_voter.Rproj` — RStudio project file. `UseSpacesForTab: Yes` at 2, matching
+  the code after the style pass.
+- `R/` — function definitions only, flat and **unnumbered**. Nine files, 35 functions.
+  Anything that executes at load time is in `scripts/`, because `tar_source()` loads the
+  whole directory.
+  - `l2.R` — partition resolution, key-based path parsing, the cross-border selector.
+  - `nppes.R` — the NBER URL tables, idempotent downloads, taxonomy union.
+  - `clean_physician_data.R` — per-year physician table; NBER + NUCC + CMS merge.
+  - `locality_sensitive_hash.R` — the shared match core plus Stages A and B.
+  - `random_forest.R` — `make_X_matrix()`, `train_rf_model()`, `score_pairs()`.
+  - `reconcile.R` — Stage D: the physician-year panel and the per-physician best match.
+  - `gap_fill.R` — gap classification, the filled panel, the gap summary.
+  - `geographic.R` — the state adjacency table.
+  - `helpers.R` — path-returning and distinctness helpers.
+- `scripts/` — standalone, side-effecting; **not** targets.
+  - `make_training_data.R` — samples LSH output into labeller partitions.
+  - `label.R` — interactive CLI hand-labelling + inter-coder kappa.
+
 - **Deleted** in `refactor/project-layout` (recoverable from git history):
   `05_match_model.R` (the flow-diagram `descision_tree_matcher()`),
   `random_forest_match_model.R` (superseded 10-feature RF), and
@@ -262,10 +263,10 @@ differs substantially from the placeholder's assumptions — see "does not exist
     `DAC_NationalDownloadableFile.csv` (623 MB), `nucc_taxonomy_230.csv` (513 KB),
     `labelled_training_data/` (4 files, 812 KB), `unlabelled_training_data/`
     (3 files, 495 KB).
-  - `trunk/derived/` — `processed_voter_data/`, written by `process_voter_data()`.
+  - `trunk/derived/` — the seven datasets the pipeline writes; see `trunk/README.md`.
     Regenerable; safe to delete.
-  - `trunk/analysis/` — created for analysis outputs, currently unused. Note that
-    `match_diagnostics.R` still writes to `figures/`, not here.
+  - `trunk/analysis/` — created for analysis outputs, currently unused. Pipeline figures
+    still live in `figures/` at the repo root, unmigrated.
   - The two training-data directories live under `raw/`, not `derived/`: they began
     as LSH samples, but their labels are human judgements the pipeline cannot
     regenerate, so losing them means re-doing the annotation.
@@ -880,11 +881,11 @@ pointers.
 
 Consequences already absorbed:
 - `clean_physician_data()`, `locality_sensitive_hash()` and
-  `add_rf_match_predictions_to_df()` all take and return paths. Their `out_pth` defaults
+  `score_pairs()` all take and return paths. Their `out_pth` defaults
   live under `trunk/derived/`.
 - `locality_sensitive_hash()` now `ungroup()`s before writing. It previously returned a
   frame still grouped by `npi`.
-- `add_rf_match_predictions_to_df()` still `collect()`s internally, because `grf` needs a
+- `score_pairs()` still `collect()`s internally, because `grf` needs a
   materialised matrix. Path-passing is about what crosses the target boundary, not about
   never materialising.
 - Distinctness is asserted where there is a real invariant: `physician_data` on `npi`,
