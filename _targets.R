@@ -24,8 +24,10 @@ controller_max <- crew::crew_controller_local(
   workers = n_workers,
   options_local = crew::crew_options_local(log_directory = "job_outputs/",
                                            log_join = TRUE),
-  seconds_launch = 90,
-  seconds_interval = 3
+  # seconds_launch stays well above crew's default of 30: R startup on a loaded HPC node is
+  # genuinely slow. seconds_interval is left at crew's default -- the reference repo's 3s
+  # suits targets that run for minutes, not a 408-branch fan-out of cheap tasks.
+  seconds_launch = 90
 )
 
 targets::tar_option_set(controller = crew::crew_controller_group(controller_primary,
