@@ -1,84 +1,163 @@
 # Pipeline Steps
 
-This page gives a brief explanation for the major steps in the pipeline. Last
-updated 17/06/24.
+What each target does, in dependency order. `_targets.R` is authoritative — if this page and
+that file disagree, the file is right and this page is stale.
 
+19 targets. `targets::tar_manifest()` lists them; `targets::tar_visnetwork()` draws the graph.
 
-## Build-System Tasks
+## Shape
 
-### `process_voter_data`
+```
+years ──┬─ cross ──> l2_extracts ──┬──> lsh_pairs ──────────┐
+states ─┘         (408 branches)   └──> cross_border_pairs ─┤
+                                                            │
+nppes_core_files ────> physician_data ──────────────────────┤
+nppes_taxonomy_files ─┘                                     │
+rf_model ───────────────────────────────────────────────────┴──> scored_pairs
+                                                                     │
+                          physician_matches <── physician_year_panel_data
+                                                     │
+                          panel_gap_summary <────────┴──> physician_year_panel_filled
+```
 
-This task processes the raw data from the l2 files that were extracted by
-`00_unzip_l2.R`, and saves them as a series of
-[parquet](https://parquet.apache.org/) files, which are much faster to read. It
-also standardizes all the columns so that they are consistent between different
-files in the collection. Internally, the code uses two schemas that we have
-developed,  `yale_schema` and `datavant_schema` these are legacy from another
-project, and are mostly kept-around to ensure compatibility with another set of
-L2 analysis.
+## Inputs
 
-### `clean_physician_data`
+### `years`, `states`
 
-This task is responsible for cleaning and consolidating data from the NPPES,
-NUCC, and taxonomy files. It reads all of the files and ensures that the
-columns are of the right type, before joining all three files together
-using the NPI number as a join key. It also subsets the datasets to
-physicians labeled as `Allopathic & Osteopathic Physicians`, to ensure we
-only have the right kind of provider in our future analyses.
+The grid, 2018–2025 crossed with the 50 states plus DC. Crossed rather than mapped over a
+discovered manifest so the graph stays static and readable.
 
+### `l2_extracts`
 
-### `locality_sensitive_hash`
+One branch per state-year — 408 in total. L2 is partitioned
+`state=XX/year=YYYY/month=MM/day=DD`, and a single state-year may hold **several** extract
+dates, so this resolves the latest `month=/day=` leaf and returns only that.
 
-This task runs locality sensitive hashing as implemented in the [zoomerjoin
-package](https://cran.r-project.org/web/packages/zoomerjoin/index.html) to find
-all physician-voter pairs with similar names within each state. This is a
-'blocking' step which reduces the number of physician-voter pairs we have to
-classify as matches / non-matches by weeding out pairs that are unlikely to
-match as the names are dissimilar.
+!!! warning
 
-### `add_rf_match_predictions_to_df`
+    Never open a dataset scoped at the `state=/year=` level. It would silently union several
+    distinct extract dates together.
 
-This task takes the LSHed data and the labeled training data as inputs. It uses
-the labeled data to train a Random Forest that predicts whether two records are
-matches based on several predictors we generate (similarity of the two names,
-distance between supposed birth date and graduation from medical
-school, etc). It then uses the Random Forest to predict whether each
-record in the larger corpus is a match or not a match. The task then returns
-the original dataframe with this vector of predictions added as a column named
-`match`.
+State-years with no directory (2024 MD, MS, NV) return nothing and drop out of downstream
+aggregation on their own. Note the branch is still *created* for those, so the early return
+inside each branched function is load-bearing rather than defensive.
 
-## Stand-Alone Scripts
+### `nppes_core_files`, `nppes_taxonomy_files`
 
-### `code/00_unzip_l2.R`
+Downloads from NBER's static mirror, one `core` file per year plus the four usable taxonomy
+extracts. Idempotent — an already-present file is returned untouched, so re-running does not
+re-fetch. Downloads land on a `.part` name first so an interrupted transfer cannot leave a
+truncated file that the idempotency check would then accept forever.
 
-!!! Warning inline end
+### `cms_file`, `nucc_taxonomy_file`, `zip_centroid_file`, `labelled_training_files`
 
-    This script needs access to the Yale network drive that houses the voter
-    data; without it the script cannot run and there is no cached alternative.
-    The voter file is licensed and cannot be redistributed, so it has to come
-    from an approved environment.
+Manually placed inputs under `trunk/raw/`. See [Instructions](instructions.md) for what they
+are and where to get them.
 
-This is a standalone script, and is not integrated into the build system. It is
-responsible for unzipping the raw l2 files, which are kept on a network drive,
-and copying them over to the `data/` folder. If you are running the
-code somewhere other than the server, you are responsible for
-pointing this code to the correct location of the L2 datasets so
-they can be ingested for this pipeline.
+## Physician side
 
+### `physician_data`
 
-### `code/make_training_data.R`
+One table per year: names and addresses from that year's NBER `core` file, taxonomy from the
+unioned extracts, graduation year and medical school from CMS. Filtered to
+`Allopathic & Osteopathic Physicians` and to individuals rather than organisations.
 
-This is a helper script that we used to create the training data used for the
-supervised matching algorithms. It takes 1500 random rows from the LSH-ed
-dataset, and divides them up into 3 semi-overlapping partitions that were
-hand-coded by lab members. The semi-overlapping nature of the partitions allows
-us to collect a lot of training data points while also calculating statistics
-such as the inter-coder reliability.
+Partitioned `year=/state=` so each matching branch prunes to one directory instead of
+scanning nationally 408 times. Asserted distinct in NPI — see
+[Methodology](methodology.md#physician-side) for how conflicting CMS records are handled.
 
-### `code/label.R`
+### `cms_npi_conflicts`
 
-This is a 40-line helper script that we used to label some of the training
-data. It takes records from the partitioned training data, and asks the user
-whether they match or not. The output is then saved into the
-`labelled_training_data` directory.
+A small in-memory diagnostic: how many NPIs were dropped for carrying conflicting CMS records,
+and whether graduation year or medical school is the field that disagrees.
 
+```r
+targets::tar_read(cms_npi_conflicts)
+```
+
+## Matching
+
+### `lsh_pairs` — Stage A
+
+Candidate physician-voter pairs within each state-year, from LSH on name. One branch per
+state-year, writing `trunk/derived/lsh_pairs/year=YYYY/state=XX`.
+
+Note the partition order is **flipped** relative to L2's own layout: L2 nests `state=` outside
+`year=`, everything this project writes is `year=` outside `state=`.
+
+### `rf_model`
+
+The trained `grf::probability_forest()`. Small enough to stay in memory rather than being
+written to disk. Trained once on the 2018 labels and reused for every year.
+
+### `cross_border_pairs` — Stage B
+
+Physicians without a unique strong in-state match, retried against the voter files of
+bordering states. Branches over the same grid as Stage A; adjacent partitions are resolved
+from the path template inside the function, because a dynamic branch cannot reach its siblings.
+
+Output is partitioned by the **physician's** state-year, not the voter's, so all of a
+physician's pairs stay in one place.
+
+### `scored_pairs` — Stage C
+
+Combines both passes for a year, computes `n` over the combined set, and predicts. One branch
+per year.
+
+!!! note
+
+    This is the one target that declares `packages = "grf"`. It calls `predict()` on a model
+    built in a *different* target, and S3 dispatch needs grf loaded to find the method —
+    namespacing the calls is not sufficient.
+
+## Outputs
+
+### `physician_year_panel_data` — Stage D
+
+One row per physician-year: that year's best-scoring voter. Ties are kept and flagged.
+
+### `physician_matches`
+
+One row per physician: the best match found in any year, plus context — `n_years_matched`,
+`n_distinct_voters`, `mover`, and the two tie flags. Asserted distinct in NPI.
+
+### `physician_year_panel_filled`
+
+The panel plus one row per gap judged confidently fillable. A separate target from
+`physician_year_panel_data` on purpose, so the unfilled panel stays available and nothing
+downstream starts seeing imputed rows by accident. Filled rows carry an identity and missing
+values for every scored attribute.
+
+Read [the gap-filling section](methodology.md#gap-filling) before using it — a fill is unsafe
+wherever registration or turnout is the outcome.
+
+### `panel_gap_summary`
+
+In-memory ledger of how many gaps there were and why each was or was not filled. Worth reading
+before trusting the filled panel.
+
+```r
+targets::tar_read(panel_gap_summary)
+```
+
+## Standalone scripts
+
+These are **not** targets. They execute on `source()`, which is why they live in `scripts/`
+rather than `R/` — `targets::tar_source()` loads all of `R/`, and having them there aborted
+pipeline definition.
+
+### `scripts/make_training_data.R`
+
+Samples the LSH output into semi-overlapping partitions for hand-labelling. The overlap is
+what allows inter-coder reliability to be computed.
+
+### `scripts/label.R`
+
+Interactive CLI for hand-labelling candidate pairs, plus the inter-coder kappa calculation.
+Output goes to `trunk/raw/labelled_training_data/`.
+
+!!! note
+
+    The labelled training data lives under `trunk/raw/`, not `trunk/derived/`, even though it
+    began as LSH output. The labels are human judgements the pipeline cannot regenerate, so
+    losing them means re-doing the annotation.

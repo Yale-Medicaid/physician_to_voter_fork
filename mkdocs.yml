@@ -1,5 +1,50 @@
 site_name: Physician to Voter Documentation
+repo_url: https://github.com/Yale-Medicaid/physician_to_voter
+repo_name: Yale-Medicaid/physician_to_voter
+
 theme:
   name: material
+  features:
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Methodology: methodology.md
+  - Pipeline steps: pipeline_steps.md
+  - Instructions: instructions.md
+  - Dependency graph: dependency_graph.md
+
 markdown_extensions:
   - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  # collapsible admonitions, used for the long "what is not yet known" style asides
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  # mermaid support, for the diagrams in methodology.md and dependency_graph.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
