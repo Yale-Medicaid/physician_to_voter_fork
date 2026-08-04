@@ -1,24 +1,9 @@
 #' State adjacency, for the cross-border matching pass
 #'
-#' @description Which states share a border, used to decide whose L2 partitions to open
-#' when looking for physicians who practise in one state and live in another.
-#'
-#' This is a proxy for "could plausibly commute across this border", not a statement of
-#' geography, so the inclusion rules are:
-#' - **Land borders: in.** Including Michigan-Wisconsin, which share a real land border via
-#'   the Upper Peninsula (it is often mislabelled a water border).
-#' - **Water-only borders: out.** Rhode Island-New York across Block Island Sound, and the
-#'   four pairs where Michigan faces another state across a Great Lake rather than touching
-#'   it: MI-IL, MI-MN, MI-NY, MI-PA. Nobody commutes those.
-#'   (Not to be confused with NY-PA, which is a ~300-mile land border and IS included.)
-#' - **Four Corners point contacts: in.** Arizona-Colorado and New Mexico-Utah touch only
-#'   at a point, but including them costs nothing -- the LSH simply finds little.
-#' - **DC-Maryland and DC-Virginia: in**, and the most consequential pair in the country
-#'   for this purpose.
-#'
-#' Alaska and Hawaii have no land neighbours and so never get a cross-border pass.
-#'
-#' Listed once per undirected pair;  symmetrises.
+#' @description A proxy for "could plausibly commute across this border", not a statement of
+#' geography: land borders and Four Corners point contacts are in, water-only borders are out.
+#' AK and HI have no land neighbours. Listed once per undirected pair; `adjacent_states()`
+#' symmetrises. See CLAUDE.md for the per-pair rules and the one commonly mislabelled border.
 #'
 #' @return a tibble of `state_a`, `state_b`
 state_adjacency <- function() {

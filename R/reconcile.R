@@ -1,15 +1,8 @@
 #' Best match per physician-year
 #'
-#' @description Collapses the scored candidate pairs to one row per (npi, year): the
-#' voter that year's model liked best.
-#'
-#' Ties are **kept and flagged**, not silently dropped. Two candidates at identical
-#' probability is a real state of affairs worth seeing, and dropping the physician would
-#' quietly shrink the panel.
-#'
-#' No `match_prob` cutoff is applied. Thresholding is left to whoever consumes this, so
-#' every physician with any candidate appears, however weak — filter on `match_prob`
-#' downstream.
+#' @description One row per (npi, year): the voter that year's model liked best. Ties are
+#' kept and flagged rather than dropped, and no `match_prob` cutoff is applied -- thresholding
+#' is the consumer's choice.
 #'
 #' @param scored_pairs paths to the per-year scored datasets from `score_pairs()`
 #' @param out_pth directory to write to
@@ -31,7 +24,7 @@ physician_year_panel <- function(scored_pairs,
     dplyr::collect() |>
     dplyr::group_by(npi, year) |>
     dplyr::filter(match_prob == max(match_prob)) |>
-    dplyr::mutate(tied = n() > 1) |>
+    dplyr::mutate(tied = dplyr::n() > 1) |>
     dplyr::ungroup() |>
     arrow::write_dataset(out_pth)
 
@@ -41,24 +34,14 @@ physician_year_panel <- function(scored_pairs,
 
 #' One best match per physician, across all years
 #'
-#' @description Reduces the physician-year panel to a single row per NPI: the highest
-#' probability match found in any year, plus enough context to tell why.
+#' @description One row per NPI: the highest-probability match in any year, plus enough
+#' context to tell why. Two tie flags, because there are two kinds -- `any_tied_in_year`
+#' within a year, `best_is_tied` across years, which the panel flag cannot see. Ties are
+#' broken deterministically by `LALVOTERID` then `year`.
 #'
-#' **Ties.** Two flags, because there are two kinds. `any_tied_in_year` comes from the panel
-#' and marks a year in which two candidates tied for that year's best. `best_is_tied` marks
-#' the physician-level case: two or more rows tie for the overall best, possibly in
-#' different years, which the panel flag cannot see. Exactly one row per NPI is still
-#' emitted -- the tie is broken deterministically by `LALVOTERID` ascending, which is
-#' arbitrary but reproducible -- and `best_is_tied` records that the choice was made.
-#'
-#' `mover` is TRUE when a physician's best-matching voter is not the same in every year
-#' they appear. Note what that does and does not mean: it says the best match *changed*,
-#' which is consistent with a genuine move but equally with two similar voters trading
-#' places between years. It is a flag to investigate, not a finding.
-#'
-#' Physicians with no data in a given year -- 2024 MD, MS and NV -- simply have fewer rows
-#' in the panel and a lower `n_years_matched`. That is structural absence and needs no
-#' special case; it must not be read as a failure to match.
+#' `mover` means only that the best-matching voter *changed* -- equally consistent with a
+#' real move and with two similar voters trading places. A flag to investigate, not a
+#' finding. See CLAUDE.md.
 #'
 #' @param panel path to the dataset from `physician_year_panel()`
 #' @param out_pth directory to write to

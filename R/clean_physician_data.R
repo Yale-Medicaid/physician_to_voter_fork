@@ -1,23 +1,9 @@
 #' Physician-side inputs for one year
 #'
-#' @description Combines three sources into one row per NPI for a single year:
-#'
-#' - **NBER `core`** (per year) -- names and addresses. This is the only per-year source;
-#'   it is what makes the physician side vary across the panel.
-#' - **NBER `ptaxcode`**, four extracts unioned newest-first -- taxonomy code. NBER's `core`
-#'   has no taxonomy field, and only four of the eight years publish a joinable one. See
-#'   `nppes_taxonomy_urls()` for which and why.
-#' - **NUCC crosswalk** and **CMS Physician Compare** -- taxonomy descriptions, and
-#'   graduation year / medical school.
-#'
-#' **Address.** State and ZIP come from the *practice location* (`plocstatename`,
-#' `ploczip`), falling back to the mailing address where practice is missing. Practice
-#' location is what `zip_dist` is meant to measure distance from -- a mailing address can be
-#' a billing office or a PO box. `addr_source` records which was used, since a column whose
-#' meaning varies by row should say so.
-#'
-#' Note the pipeline previously used the mailing address throughout, which never matched
-#' what `figures/processing.png` described.
+#' @description One row per NPI, from NBER `core` (the only per-year source), NBER
+#' `ptaxcode`, the NUCC crosswalk, and the CMS Physician Compare file. State and ZIP come
+#' from the *practice* location, falling back to mailing, with `addr_source` recording which
+#' was used. An NPI with conflicting CMS records is dropped entirely. See CLAUDE.md.
 #'
 #' @param nppes_core_file per-year NBER core file from `download_nppes_core()`
 #' @param taxonomy_files NBER ptaxcode files from `download_nppes_taxonomy()`
@@ -80,10 +66,8 @@ clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc
 
 #' Count NPIs carrying conflicting CMS records
 #'
-#' @description `clean_physician_data()` drops any NPI with more than one
-#' (grd_yr, med_sch) combination. This measures how much that costs, and which field is
-#' responsible -- two graduation years is a different data-quality story from two medical
-#' schools. Small, so it stays an in-memory target: `targets::tar_read(cms_npi_conflicts)`.
+#' @description How much the drop-conflicting-NPIs rule costs, and which field disagrees.
+#' In-memory: `targets::tar_read(cms_npi_conflicts)`.
 #'
 #' @param cms_file path to the CMS Physician Compare csv
 #'
@@ -95,13 +79,13 @@ count_cms_npi_conflicts <- function(cms_file) {
     dplyr::distinct() |>
     dplyr::group_by(npi) |>
     dplyr::summarize(
-      n_rows = n(),
+      n_rows = dplyr::n(),
       n_grd_yr = dplyr::n_distinct(grd_yr),
       n_med_sch = dplyr::n_distinct(med_sch),
       .groups = "drop"
     ) |>
     dplyr::summarize(
-      n_npi = n(),
+      n_npi = dplyr::n(),
       n_conflicting = sum(n_rows > 1),
       pct_conflicting = n_conflicting/n_npi,
       max_rows_per_npi = max(n_rows),

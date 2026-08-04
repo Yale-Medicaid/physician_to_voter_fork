@@ -1,44 +1,11 @@
 #' Classify every empty physician-year in the panel
 #'
-#' @description A physician can be absent from a year of the panel for two quite different
-#' reasons, and the distinction is the whole point of this step:
-#'
-#' - **No L2 data existed** for the state they practised in that year (2024 MD, MS and NV).
-#'   Matching was *impossible*, so absence carries no information about the physician.
-#' - **L2 existed and they were not matched.** Absence is now evidence, though ambiguous
-#'   evidence: they may not have been registered, or the match may simply have failed.
-#'
-#' Filling the first case is close to free. Filling the second trades a false negative for a
-#' possible false positive, so it is gated harder.
-#'
-#' **The universe of gaps is `physician_data`, not the panel.** A gap only exists where the
-#' physician had an NPI record that year -- otherwise there is nothing to fill and no claim
-#' to make.
-#'
-#' @section The gates:
-#'
-#' A gap is fillable only when all four hold. Every one of them can fail to `NA`, and `NA`
-#' is treated as failure throughout -- absence of evidence is not evidence here.
-#'
-#' | Gate | Requirement | Why |
-#' |---|---|---|
-#' | `has_anchor` | at least one year matched at `match_prob >= min_fill_prob` | the panel applies no cutoff, so a physician's only "match" may be near-zero. Filling from that would manufacture a link out of noise. |
-#' | `unambiguous` | exactly one distinct `LALVOTERID` across the anchor years | two voters means we do not know which identity to carry into the gap. This also excludes tied anchors. |
-#' | `state_stable` | the gap year's practice state equals the anchor years' single practice state | a physician who changed practice state may well have changed registration; the link across the gap is exactly what is uncertain. |
-#' | `near` | the best anchor's `zip_dist` is non-`NA` and `<= max_fill_zip_dist` | corroborates that the anchor match itself is geographically plausible. `NA` means the ZIP had no ZCTA, so proximity cannot be checked. |
-#'
-#' Tier is then just *why the year was empty*, given the gates passed:
-#'
-#' | `fill_tier` | Meaning |
-#' |---|---|
-#' | 1 | gates passed, and no L2 partition existed -- structural absence |
-#' | 2 | gates passed, but L2 existed and the physician was not matched |
-#' | 3 | gates not passed -- do not fill |
-#'
-#' **Movers are never filled.** `unambiguous` fails for them by construction. That is
-#' deliberate: `mover` already means only that the best-matching voter *changed*, which
-#' `reconcile_physician_matches()` notes is equally consistent with scoring noise. Choosing
-#' one of the two records to carry across a gap would be a guess dressed as data.
+#' @description Four gates decide whether a gap can be filled -- `has_anchor`,
+#' `unambiguous`, `state_stable`, `near` -- and `NA` fails all of them. `fill_tier` then
+#' records why the year was empty: 1 = no L2 partition existed, 2 = L2 existed and the
+#' physician was not matched, 3 = not filled. The gap universe is `physician_data`, not the
+#' panel. Movers are never filled, since `unambiguous` fails for them by construction. See
+#' CLAUDE.md for the reasoning behind each gate.
 #'
 #' @param panel path to the dataset from `physician_year_panel()`
 #' @param physician_data paths to the per-year physician datasets -- the gap universe
@@ -122,31 +89,15 @@ classify_panel_gaps <- function(panel, physician_data, l2_extracts,
 
 #' The physician-year panel, with confident gaps filled
 #'
-#' @description Emits `physician_year_panel()`'s rows unchanged, plus one row per gap that
-#' `classify_panel_gaps()` judged fillable. A separate target rather than a modification of
-#' the panel, so the unfilled panel stays available and nothing downstream silently starts
-#' seeing imputed rows.
+#' @description The panel's rows unchanged, plus one row per fillable gap. A separate target
+#' so nothing downstream starts seeing imputed rows by accident. Filled rows carry a
+#' `LALVOTERID` and `NA` for every scored attribute -- there is no model output for a year
+#' that was never scored.
 #'
-#' **Filled rows carry an identity and nothing else.** `LALVOTERID` is filled; every scored
-#' attribute -- `match_prob`, `zip_dist`, `full_name_sim`, `n`, `state_agree`, `tied` -- is
-#' `NA`. There is no model output for a year that was never scored, and writing the anchor
-#' year's values into the gap would invent a measurement. It also makes a filled row
-#' impossible to mistake for a scored one even if `filled` is ignored.
-#'
-#' @section What a filled row does and does not license:
-#'
-#' A fill asserts *this physician is this voter*, extended to a year where that was not
-#' observed. So:
-#'
-#' - **Safe** for appending time-invariant or slow-moving voter attributes -- birth date,
-#'   place of birth, race/ethnicity.
-#' - **Unsafe** wherever registration or turnout is the outcome. In Tier 2 especially, the
-#'   physician's absence may *be* the finding: they might genuinely not have been registered
-#'   that year. Filling it and then asking "were they registered?" answers the question with
-#'   the assumption.
-#'
-#' Filter on `filled` or `fill_tier` accordingly. No fill is applied to the tie flags, and
-#' `filled = FALSE` rows are byte-for-byte the panel's.
+#' A fill asserts *this physician is this voter* in a year where that was not observed. Safe
+#' for appending time-invariant voter attributes; **unsafe wherever registration or turnout
+#' is the outcome**, since in Tier 2 the absence may itself be the finding. Filter on
+#' `filled` or `fill_tier`.
 #'
 #' @param panel path to the dataset from `physician_year_panel()`
 #' @param physician_data paths to the per-year physician datasets
@@ -202,14 +153,10 @@ fill_panel_gaps <- function(panel, physician_data, l2_extracts,
 
 #' How many panel gaps there are, and why they were or were not filled
 #'
-#' @description Reports the gap ledger by tier and, for the unfilled ones, which gate
-#' failed. Gates are not mutually exclusive, so the `n_fail_*` columns overlap and will not
-#' sum to `n_tier_3`.
-#'
-#' Worth reading before trusting the filled panel: if `n_tier_2` dwarfs `n_tier_1`, most
-#' fills rest on the weaker inference, and `min_fill_prob` / `max_fill_zip_dist` are doing
-#' real work rather than acting as formalities. Small, so it stays an in-memory target:
-#' `targets::tar_read(panel_gap_summary)`.
+#' @description The gap ledger by tier, and which gate failed for the unfilled ones. Gates
+#' overlap, so the `n_fail_*` columns do not sum to `n_tier_3`. Worth reading before trusting
+#' the filled panel: if `n_tier_2` dwarfs `n_tier_1`, most fills rest on the weaker
+#' inference. In-memory: `targets::tar_read(panel_gap_summary)`.
 #'
 #' @inheritParams classify_panel_gaps
 #'

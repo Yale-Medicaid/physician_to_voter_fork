@@ -1,23 +1,8 @@
 #' Make Predictor Matrix
 #'
-#' @description Extract the predictors used for a classification model, and format them as a
-#' numeric matrix.
-#'
-#' **`state_agree` is deliberately NOT a feature**, though it is computed and carried.
-#' Crossing a state line is not what makes a match implausible -- distance is, and
-#' `zip_dist` already measures that directly. A physician living 15 miles away across a
-#' border is nearer than one living 60 miles away in-state, and the model should treat them
-#' accordingly.
-#'
-#' This also means the model transfers to cross-border pairs without new labels. The
-#' training data is same-state only, but intra-state distances in large states run to
-#' hundreds of miles, so `zip_dist` at (say) 67 miles is well inside the range the model has
-#' already learned from -- it simply learned it from Texas rather than from a border
-#' crossing. Adding `state_agree` would have contributed nothing that `zip_dist` does not
-#' carry better, while being constant in training and so unsplittable anyway.
-#'
-#' It stays in the output as a diagnostic: it is the natural way to ask what share of
-#' high-probability matches are cross-border.
+#' @description The eight predictors, as a numeric matrix. `state_agree` is deliberately
+#' **not** among them -- distance is what makes a match implausible, and `zip_dist` measures
+#' it directly and continuously. It stays in the output as a diagnostic. See CLAUDE.md.
 #'
 #' @param df the input dataframe
 #'
@@ -31,24 +16,23 @@ make_X_matrix <- function(df) {
     ) |>
     dplyr::select(zip_dist, year_dist, full_name_sim, mid_initial_agree,
                   mid_name_agree, n, occ_medical, occ_unknown) |>
-    dplyr::mutate(dplyr::across(where(is.logical), as.integer)) |>
+    dplyr::mutate(dplyr::across(tidyselect::where(is.logical), as.integer)) |>
     as.matrix()
 }
 
 
 #' Train the match model
 #'
-#' @description Fit a probability forest on the hand- and rule-labelled pairs. Trained
-#' ONCE and reused for every year: the labelled data is 2018-only, so this assumes the
-#' feature distribution is stable across the panel. That assumption is untested and
-#' nothing here detects drift -- if match rates look odd in later years, check it first.
+#' @description Fit once on the 2018 labels and reused for every year, which assumes the
+#' feature distribution is stable across the panel. That assumption is untested and nothing
+#' detects drift -- if later years look odd, check it first.
 #'
 #' @param labelled_training_files paths to the labelled training data
 #'
 #' @return a `grf::probability_forest` fit. Small enough to stay an in-memory target.
 train_rf_model <- function(labelled_training_files) {
   labelled_training_data <- labelled_training_files |>
-    purrr::map(read_parquet) |>
+    purrr::map(arrow::read_parquet) |>
     purrr::list_rbind()
 
   grf::probability_forest(make_X_matrix(labelled_training_data),
@@ -58,17 +42,10 @@ train_rf_model <- function(labelled_training_files) {
 
 #' Score one year of candidate pairs
 #'
-#' @description Combines every state's candidate pairs for a year, computes `n`, and
-#' predicts.
-#'
-#' `n` (candidates per NPI) is computed *here*, over both passes together, rather than in
-#' either matching function. That is now load-bearing rather than merely forward-looking:
-#' Stage B adds pairs for the same NPI out of adjacent states, so a per-branch count would
-#' undercount and drift from the national definition the model was trained against.
-#'
-#' Scoring is per year rather than all at once because `grf` needs a materialised matrix,
-#' and every candidate pair for eight years at national scale will not fit in memory. One
-#' year is the scale the pipeline has historically handled.
+#' @description Combines both passes for a year, computes `n`, and predicts. `n` is computed
+#' here rather than in either matching function because Stage B adds pairs for the same NPI
+#' from adjacent states, so a per-branch count would undercount. Per year because `grf` needs
+#' a materialised matrix.
 #'
 #' @param lsh_pairs paths to the Stage A (in-state) candidate pair datasets
 #' @param cross_border_pairs paths to the Stage B (cross-border) datasets, possibly empty
@@ -104,7 +81,7 @@ score_pairs <- function(lsh_pairs, cross_border_pairs, rf_model, this_year,
 
   pairs <- pairs |>
     dplyr::group_by(npi) |>
-    dplyr::mutate(n = n()) |>
+    dplyr::mutate(n = dplyr::n()) |>
     dplyr::ungroup()
 
   pairs$match_prob <- predict(rf_model, newdata = make_X_matrix(pairs))$predictions[, 2]

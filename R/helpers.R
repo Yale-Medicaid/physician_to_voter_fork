@@ -1,8 +1,7 @@
 #' Return an output path, or NULL if nothing was written
 #'
-#' @description Targets in this pipeline pass paths rather than data, so a function that
-#' had nothing to write must hand back `NULL` rather than a path to a directory that does
-#' not exist. Ending a writing function with this makes that automatic.
+#' @description Targets pass paths, so a function with nothing to write must return `NULL`
+#' rather than a path that does not exist.
 #'
 #' @param out_pth path the caller intended to write
 #'

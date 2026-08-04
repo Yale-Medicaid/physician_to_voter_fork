@@ -1,31 +1,10 @@
 #' NBER NPPES `core` file for one year
 #'
-#' @description NBER mirrors the NPPES dissemination files, but the layout is **not**
-#' uniform across years -- there are four different schemes, and one year is truncated. The
-#' URL pattern given in older documentation
-#' (`/{YYYY}/{MM}/core_{YYYYMM}_csv.zip`) resolves for only three of the eight years, so the
-#' table below is explicit rather than constructed from a rule.
-#'
-#' | Years | Layout |
-#' |---|---|
-#' | 2018 | `/2018/core2018{M}.*` -- flat, month **not** zero-padded |
-#' | 2019 | `/2019/{MM}/core_{YYYYMM}.*` -- only months 07-12 exist |
-#' | 2020-2022 | `/{YYYY}/csv/core{YYYY}{M}.*` -- format-first, month not padded |
-#' | 2023 | `/2023/csv/core_{MonthName}_2023.*` (Jan-Apr) **and** `/2023/5/core_20235.*` (May) |
-#' | 2024-2025 | `/{YYYY}/{MM}/core_{YYYYMM}.*` |
-#'
-#' An explicit table is deliberate. Rule-based construction across four schemes plus a
-#' truncated year is fragile and would fail *silently* the next time NBER reorganises;
-#' a listed URL that stops resolving fails loudly instead. It is also citable in a methods
-#' write-up, which a rule is not.
-#'
-#' **Vintage: the latest month available in each year.** December for every year except
-#' 2023, which stops at May -- there is no month present in all eight years (2019 starts in
-#' July, 2023 ends in May), so a uniform vintage is not on offer from this source.
-#'
-#' **Format: parquet where it exists, CSV otherwise.** 2018 has no parquet at all, and
-#' 2023's May file has none either (its January-April files do, but those are older
-#' vintages). Everything else is parquet, which suits `arrow` and avoids an unzip step.
+#' @description An explicit table, not a constructed URL: NBER uses four different layouts
+#' across 2018-2025 and the documented pattern resolves for only three years. Vintage is the
+#' latest month available per year (December, except 2023 which stops at May), and format is
+#' parquet where it exists. A rule would fail silently on the next reorganisation; a listed
+#' URL that stops resolving fails loudly. See CLAUDE.md.
 #'
 #' @param year four-digit year, 2018-2025
 #'
@@ -61,8 +40,7 @@ nppes_core_url <- function(year) {
 
 #' Download one year's NPPES core file
 #'
-#' @description Idempotent: if the file is already on disk it is returned untouched, so
-#' re-running the pipeline does not re-fetch ~80 MB per year.
+#' @description Idempotent, so re-running does not re-fetch ~80 MB per year.
 #'
 #' @param year four-digit year
 #' @param out_dir directory to download into
@@ -77,29 +55,11 @@ download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 360
 
 #' NBER taxonomy (`ptaxcode`) extracts
 #'
-#' @description Taxonomy comes from NBER rather than CMS so that every NPPES input is
-#' fetched from one static archive -- CMS reorganises its download pages, NBER's tree does
-#' not.
-#'
-#' **Only four of the eight years are usable**, which is a property of the source, not a
-#' choice:
-#'
-#' | Year | Status |
-#' |---|---|
-#' | 2018 | no taxonomy file published at all |
-#' | 2019 | usable -- `npi, seq, ptaxcode` |
-#' | 2020 | returns HTTP 403 for every format, while `core` in the same directory is fine |
-#' | 2021, 2022 | published without an `npi` column (`ptaxcode, ptaxgroup, pprimtax`), so unjoinable |
-#' | 2023 | usable -- extra columns, same keys |
-#' | 2024, 2025 | usable -- `npi, seq, ptaxcode` |
-#'
-#' Listed newest-first. `clean_physician_data()` unions them in that order and keeps the
-#' first designation per NPI, so the **most recent** classification wins and providers who
-#' drop out mid-panel are still recovered.
-#'
-#' The residual gap: anyone who both appeared and disappeared strictly between 2019-12 and
-#' 2023-05 is in none of these extracts. NPIs are rarely deactivated and taxonomy is
-#' near-static, so this should be a small population -- but it is a real one.
+#' @description From NBER rather than CMS, so every NPPES input comes from one static
+#' archive. Only four of the eight years are usable and that is the source's doing, not a
+#' choice -- 2018 publishes none, 2020 returns 403, and 2021/2022 ship without an `npi`
+#' column. Listed newest-first, so the most recent designation wins. See CLAUDE.md for the
+#' per-year detail and the residual coverage gap.
 #'
 #' @return a tibble of `vintage`, `url`, newest first
 nppes_taxonomy_urls <- function() {
@@ -127,12 +87,9 @@ download_nppes_taxonomy <- function(out_dir = "trunk/raw/nppes", timeout = 3600)
 
 #' Read and union the taxonomy extracts, most recent designation winning
 #'
-#' @description Sorts by vintage rather than trusting the order of `paths`, so a caller
-#' cannot silently invert the precedence.
-#'
-#' `seq == 1` selects the primary taxonomy, matching the `_1` suffix the CMS dissemination
-#' file used. It is also load-bearing mechanically: `ptaxcode` holds one row per taxonomy
-#' per NPI, so without it the downstream join would duplicate providers.
+#' @description Sorts by vintage internally, so a caller cannot invert the precedence.
+#' `seq == 1` selects the primary taxonomy and is also mechanically required -- without it
+#' the downstream join would duplicate providers.
 #'
 #' @param paths taxonomy files from `download_nppes_taxonomy()`
 #'
@@ -169,9 +126,8 @@ read_taxonomy_union <- function(paths) {
 
 #' Fetch a file from NBER, once
 #'
-#' @description Idempotent: an already-present file is returned untouched. Downloads land
-#' on a `.part` name first, so an interrupted transfer cannot leave a truncated file that
-#' the idempotency check would then accept forever.
+#' @description Idempotent. Downloads land on a `.part` name first, so an interrupted
+#' transfer cannot leave a truncated file that the check would accept forever.
 #'
 #' @param url file to fetch
 #' @param out_dir directory to download into
@@ -206,10 +162,8 @@ download_nber_file <- function(url, out_dir = "trunk/raw/nppes", timeout = 3600)
 
 #' Read a downloaded NPPES core file, whichever format it is in
 #'
-#' @description ZIP columns are forced to string. Left to type inference a CSV ZIP becomes
-#' an integer and loses its leading zero -- `06510` reads back as `6510` -- which then fails
-#' every ZCTA centroid lookup, silently, since the centroid table is zero-padded. Only the
-#' ZIP columns need pinning; everything else infers fine.
+#' @description ZIP columns are pinned to string. Inference turns `06510` into `6510`, which
+#' then fails every ZCTA lookup silently.
 #'
 #' @param path path returned by `download_nppes_core()`
 #'

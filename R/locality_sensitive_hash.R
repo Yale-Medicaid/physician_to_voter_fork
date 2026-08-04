@@ -1,8 +1,7 @@
 #' L2 columns to carry through the match
 #'
-#' @description Legacy `yale_schema` / `datavant_schema` vectors from an earlier project,
-#' kept because other L2 analyses expect the same column set. Only the *names* are used
-#' here -- the "c"/"n" type codes are never applied.
+#' @description Legacy vectors from an earlier project, kept so other L2 analyses see the
+#' same column set. Only the names are used; the "c"/"n" type codes are never applied.
 #'
 #' @return character vector of column names
 l2_match_columns <- function() {
@@ -50,9 +49,8 @@ l2_match_columns <- function() {
 
 #' Derive the physician-side match columns
 #'
-#' @description `coalesce()` rather than `replace_na()` throughout, matching the voter
-#' side: arrow has no binding for `replace_na` and silently pulls the whole table into R
-#' when it meets one.
+#' @description `coalesce()` rather than `replace_na()` throughout: arrow has no binding for
+#' `replace_na` and silently pulls the whole table into R when it meets one.
 #'
 #' @param phys a collected physician frame
 #'
@@ -77,16 +75,10 @@ prepare_physicians <- function(phys) {
 
 #' Read one L2 extract and derive the voter-side match columns
 #'
-#' @description Reads exactly one `month=/day=` leaf, never the `state=/year=` level --
-#' opening higher would silently union several extract dates together.
-#'
-#' The occupation column is renamed between 2024 and 2025, so it is canonicalised to
-#' `CommercialData_Occupation` here. This matters: without it the 2025 read would not
-#' *error*, because `contains("Occupation")` and `any_of()` would quietly match nothing and
-#' every occupation-derived column would come out empty.
-#'
-#' The derived columns are computed inside the arrow query, before `collect()`, so they
-#' evaluate as the dataset streams rather than over the whole partition held in memory.
+#' @description Reads exactly one `month=/day=` leaf; opening higher would union several
+#' extract dates. The occupation column is canonicalised here because it was renamed between
+#' 2024 and 2025 -- without that, a 2025 read would come out empty rather than erroring. The
+#' derived columns sit before `collect()` so they evaluate as the dataset streams.
 #'
 #' @param l2_extract path to one resolved L2 leaf
 #'
@@ -174,9 +166,9 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
 
   processed <- join_out |>
     dplyr::mutate(
-      Voters_MiddleName = replace_na(Voters_MiddleName, ""),
-      mid_nm = replace_na(mid_nm, ""),
-      year_dist = grd_yr - year(Voters_BirthDate)
+      Voters_MiddleName = dplyr::coalesce(Voters_MiddleName, ""),
+      mid_nm = dplyr::coalesce(mid_nm, ""),
+      year_dist = grd_yr - lubridate::year(Voters_BirthDate)
     )
 
   EARTH_RADIUS_MILES <- 6371/1.609344   # 6371 km -- the radius NBER's files match
@@ -272,12 +264,10 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 
 #' Stage B -- match leftover physicians against neighbouring states' voter files
 #'
-#' @description Catches physicians who practise in one state and live in another. Only
-#' physicians without a unique strong in-state match are retried -- see
-#' `unmatched_physicians()`.
-#'
-#' Adjacent partitions are resolved directly from `l2_path` rather than read off the
-#' `l2_extracts` target, because a dynamic branch cannot reach its siblings.
+#' @description Catches physicians who practise in one state and live in another; only those
+#' without a unique strong in-state match are retried. Adjacent partitions are resolved from
+#' `l2_path` rather than the `l2_extracts` target, because a dynamic branch cannot reach its
+#' siblings.
 #'
 #' @param physician_data path to the cleaned physician dataset
 #' @param l2_extract this branch's own L2 leaf, used only to learn its state and year

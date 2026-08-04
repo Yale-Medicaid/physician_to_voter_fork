@@ -617,7 +617,7 @@ Output is partitioned `year=/state=`, so each matching branch prunes to one dire
 instead of scanning nationally 408 times.
 
 ## Tests
-`tests/test_l2_and_geography.R` — **139 checks** over the L2 partition helpers, the state
+`tests/test_l2_and_geography.R` — **140 checks** over the L2 partition helpers, the state
 adjacency table, the cross-border physician selector, the NPPES URL table and taxonomy
 union, and the panel gap filler. Run from the repo root:
 
@@ -985,6 +985,40 @@ branch per state-year`), matching the reference repo, plus the `packages = "grf"
 **Reasoning belongs here, not in the code.** Every explanation removed was already recorded
 in this file — that is what made the deletion safe, and it is the standing division of
 labour. If a future change needs justifying, write it here and leave the code clean.
+
+### Roxygen: `@param`/`@return` in full, `@description` in two or three sentences
+Cut from 579 lines to 359 against 912 lines of code. Every `@param` and `@return` was kept —
+they are the only record of what the arguments mean. The `@description` blocks lost their
+prose: the reasoning belongs in this file, and repeating it above the function meant
+maintaining it in three places (here, roxygen, in-body comment) and letting all three drift.
+
+Where a decision needs justifying, the block now says so and points here. For calibration,
+`treated-by-thy-neighbor` carries 10 roxygen lines across 3270 lines of code, in one file of
+twenty; this project is far more documented than that even after the cut.
+
+### ⚠ Dropping `packages` breaks bare calls that no test here can catch
+Removing the project-wide `packages` argument means **every** call in `R/` must be namespaced
+or base. Four sites shipped bare and would have died on the first real run:
+
+- `n()` inside `dplyr::summarize()`/`mutate()` — dplyr does **not** put `n` in the data mask.
+  It fails with `could not find function "n"`. Now `dplyr::n()`.
+- `read_parquet` passed *as a value* to `purrr::map()` — no parentheses, so no regex looking
+  for `name(` will ever find it. Now `arrow::read_parquet`.
+- `replace_na()` and `year()` in `match_pairs()` — tidyr and lubridate. `replace_na` was also
+  against this file's own rule, so it became `dplyr::coalesce()`; `year` became
+  `lubridate::year()`.
+
+`tidyselect::where()` inside `dplyr::across()` is the one case that works bare, because
+tidyselect supplies it in the selection context. Namespaced anyway for consistency.
+
+**The test suite cannot catch this by running the code**, because it does
+`library(arrow); library(tidyverse)` for its own convenience — so a bare dplyr call works
+there and still dies in a crew worker. The guard at the top of
+`tests/test_l2_and_geography.R` therefore uses `codetools::findGlobals(merge = FALSE)$functions`
+to enumerate call-position symbols and diff them against project functions plus the base
+packages. Complete by construction, unlike a list of remembered names — which is exactly how
+`replace_na` and `year` survived the first attempt. Verified to fail when a bare call is
+injected.
 
 ### ⚠ `packages = "grf"` on `scored_pairs` is load-bearing
 `tar_option_set()` no longer takes a project-wide `packages` argument, because everything in
