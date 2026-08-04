@@ -122,12 +122,14 @@ read_l2_partition <- function(l2_extract) {
 #' @param voter_dataset voter frame from `read_l2_partition()`
 #' @param zip_centroid_file path to the NBER ZCTA centroid csv
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
+#' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
+#'   logical core -- which oversubscribes badly once several crew workers each do it.
 #'
 #' @return a frame of candidate pairs with comparison features, or `NULL` if either side is
 #'   empty or no pairs were found
 match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                         n_gram_width = 3, band_width = 7,
-                        n_bands = 400, threshold = 0.7) {
+                        n_bands = 400, threshold = 0.7, nthread = NULL) {
   if (nrow(phys_data) == 0 || nrow(voter_dataset) == 0) {
     return(NULL)
   }
@@ -140,6 +142,7 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                                                band_width = band_width,
                                                n_bands = n_bands,
                                                threshold = threshold,
+                                               nthread = nthread,
                                                clean = TRUE, progress = TRUE)
 
   # block_by = "mi" carries the middle-initial *agreement* requirement. Dropping it would
@@ -152,6 +155,7 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
                                                band_width = band_width,
                                                n_bands = n_bands,
                                                threshold = threshold,
+                                               nthread = nthread,
                                                clean = TRUE, progress = TRUE) |>
     # coalesce before nchar(): nchar(NA) is NA, and filter() drops NA rows
     dplyr::filter(nchar(dplyr::coalesce(Voters_MiddleName, "")) <= 1 |
@@ -226,13 +230,16 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
 #' @param zip_centroid_file path to the NBER ZCTA centroid csv
 #' @param out_pth glue template for the output directory
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
+#' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
+#'   logical core -- which oversubscribes badly once several crew workers each do it.
 #'
 #' @return `out_pth` -- candidate pairs for this state-year, one row per
 #'   (npi, LALVOTERID), or `NULL`
 locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_file,
                                     out_pth = "trunk/derived/lsh_pairs/{ys}",
                                     n_gram_width = 3, band_width = 7,
-                                    n_bands = 400, threshold = 0.7) {
+                                    n_bands = 400, threshold = 0.7,
+                                    nthread = NULL) {
   if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
     return(NULL)
   }
@@ -250,7 +257,7 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
     prepare_physicians()
 
   pairs <- match_pairs(phys_data, read_l2_partition(l2_extract), zip_centroid_file,
-                       n_gram_width, band_width, n_bands, threshold)
+                       n_gram_width, band_width, n_bands, threshold, nthread)
 
   if (rlang::is_empty(pairs)) {
     return(NULL)
@@ -277,6 +284,8 @@ locality_sensitive_hash <- function(physician_data, l2_extract, zip_centroid_fil
 #' @param out_pth glue template for the output directory
 #' @param min_name_sim passed to `unmatched_physicians()`
 #' @param n_gram_width,band_width,n_bands,threshold zoomerjoin LSH tuning
+#' @param nthread Rayon threads per call. `NULL` uses Rayon's global pool, i.e. every
+#'   logical core -- which oversubscribes badly once several crew workers each do it.
 #'
 #' @return `out_pth` -- cross-border candidate pairs, or `NULL` if there were none.
 #'   Partitioned by the *physician's* state-year, not the voter's, so all of a physician's
@@ -286,7 +295,8 @@ lsh_cross_border <- function(physician_data, l2_extract, lsh_pairs, l2_path,
                              out_pth = "trunk/derived/cross_border_pairs/{ys}",
                              min_name_sim = 0.85,
                              n_gram_width = 3, band_width = 7,
-                             n_bands = 400, threshold = 0.7) {
+                             n_bands = 400, threshold = 0.7,
+                             nthread = NULL) {
   if (rlang::is_empty(physician_data) || rlang::is_empty(l2_extract)) {
     return(NULL)
   }
@@ -317,7 +327,7 @@ lsh_cross_border <- function(physician_data, l2_extract, lsh_pairs, l2_path,
       }
 
       match_pairs(phys_data, read_l2_partition(nb_extract), zip_centroid_file,
-                  n_gram_width, band_width, n_bands, threshold)
+                  n_gram_width, band_width, n_bands, threshold, nthread)
     }) |>
     purrr::compact() |>
     purrr::list_rbind()
