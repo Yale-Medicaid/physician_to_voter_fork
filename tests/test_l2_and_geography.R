@@ -134,6 +134,23 @@ ok("the 2025 fixture really does store the consumer name",
      names(open_dataset(resolve_l2_extract("CT", 2025, l2_path)) |> collect()))
 
 ## ------------------------------------------------------- state adjacency
+cat("\n== pipeline scoping (P2V_YEARS / P2V_STATES) ==\n")
+old_env <- c(Sys.getenv("P2V_YEARS"), Sys.getenv("P2V_STATES"))
+Sys.unsetenv(c("P2V_YEARS", "P2V_STATES"))
+ok("years defaults to the full panel", identical(pipeline_years(), 2018:2025))
+ok("states defaults to 50 plus DC",
+   length(pipeline_states()) == 51 && "DC" %in% pipeline_states())
+Sys.setenv(P2V_YEARS = "2018, 2019", P2V_STATES = " ct , ny ")
+ok("years honours the override, whitespace and all",
+   identical(pipeline_years(), c(2018L, 2019L)))
+ok("states honours the override and upcases",
+   identical(pipeline_states(), c("CT", "NY")))
+Sys.unsetenv(c("P2V_YEARS", "P2V_STATES"))
+ok("unsetting returns to the full panel",
+   identical(pipeline_years(), 2018:2025) && length(pipeline_states()) == 51)
+if (nzchar(old_env[1])) Sys.setenv(P2V_YEARS = old_env[1])
+if (nzchar(old_env[2])) Sys.setenv(P2V_STATES = old_env[2])
+
 cat("\n== state_adjacency ==\n")
 adj <- state_adjacency()
 all_states <- sort(unique(c(adj$state_a, adj$state_b)))
