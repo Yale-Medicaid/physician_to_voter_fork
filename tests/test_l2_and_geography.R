@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
 source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
 source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
 source("R/random_forest.R"); source("R/reconcile.R"); source("R/nppes.R")
-source("R/gap_fill.R")
+source("R/gap_fill.R"); source("R/reference_data.R")
 
 FAIL <- 0L
 ok <- function(label, cond) {
@@ -620,6 +620,34 @@ ok("with no L2 at all, fillable gaps are tier 1",
          filter(fillable) %>% pull(fill_tier) == 1L))
 ok("a NULL panel yields no filled dataset",
    is.null(fill_panel_gaps(NULL, phys_pths, gap_l2, out_pth = "gapf_null")))
+
+cat("\n== reference-data downloads ==\n")
+# Offline by design, like the NPPES section: plant the file the function would fetch and
+# check it is returned untouched. The URLs themselves are asserted, not requested.
+ok("NUCC url is the pinned 23.0 csv on nucc.org",
+   grepl("^https://www[.]nucc[.]org/.*/nucc_taxonomy_230[.]csv$", nucc_taxonomy_url()))
+ok("centroid url is the 2024 ZCTA file on data.nber.org",
+   grepl("^https://data[.]nber[.]org/distance/zip/2024/.*gaz2024zcta5centroid[.]csv$",
+         zip_centroid_url()))
+ok("each url is a single string", length(nucc_taxonomy_url()) == 1 &&
+     length(zip_centroid_url()) == 1)
+
+dir.create("refdl", showWarnings = FALSE)
+for (fn in list(list("nucc", nucc_taxonomy_url, download_nucc_taxonomy),
+                list("centroid", zip_centroid_url, download_zip_centroids))) {
+  planted <- file.path("refdl", basename(fn[[2]]()))
+  writeLines("planted, not really the real file", planted)
+  before <- file.mtime(planted)
+  got <- fn[[3]](out_dir = "refdl")
+  ok(paste0(fn[[1]], ": an already-present file is returned, not re-fetched"),
+     normalizePath(got) == normalizePath(planted) && file.mtime(planted) == before)
+}
+ok("no .part leftovers", length(list.files("refdl", pattern = "[.]part$")) == 0)
+
+# download_once() must refuse a destination it could not actually write
+ok("download_once fails loudly on an unreachable url",
+   inherits(try(download_once("https://invalid.invalid/nope.csv", out_dir = "refdl",
+                              timeout = 5), silent = TRUE), "try-error"))
 
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
