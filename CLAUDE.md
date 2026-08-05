@@ -558,6 +558,38 @@ different layouts across 2018–2025 and the documented
 Do not replace the table with a rule. Four schemes plus a truncated year means a rule fails
 *silently* on the next reorganisation; a listed URL that stops resolving fails loudly.
 
+## Reference inputs are downloaded — and one of them is not pinnable
+`R/reference_data.R` fetches the three inputs that used to be placed by hand. Only
+`labelled_training_data/` is still manual, because those labels cannot be regenerated.
+`download_once()` in `R/helpers.R` is the shared, idempotent fetcher (formerly
+`download_nber_file()` — it was never NBER-specific).
+
+- **NUCC** and **NBER centroids** are pinned URLs, same reasoning as `nppes_core_url()`.
+- **NUCC stays at 23.0 deliberately.** Newer releases exist (24.1, 25.0, 25.1, 26.1) and the
+  URL pattern looks predictable, but the version determines which taxonomy codes carry the
+  `Allopathic & Osteopathic Physicians` grouping — i.e. the provider filter. Bumping it is a
+  data decision; re-check the provider count if you do. Note the version numbers are not a
+  dense sequence: 25.2 and 26.0 both 404 while 26.1 resolves, so "fetch the newest" would have
+  to probe and would still guess.
+- **CMS cannot be pinned.** Its path embeds a content hash and timestamp
+  (`.../resources/<hash>_<stamp>/DAC_NationalDownloadableFile.csv`) that change every release,
+  so `cms_dac_url()` resolves it from the metastore API using the stable dataset id
+  `mj5m-pzi6`. The API answers automated requests even though the human-facing download pages
+  return 403 — that asymmetry is why this works at all.
+
+**Consequence worth understanding:** the CMS input is a moving target. A fresh checkout gets
+whatever CMS publishes that day, so `grd_yr`/`med_sch` — and therefore `year_dist` and the
+matches — can change with nothing in the repo changing. Idempotency is what keeps an existing
+`trunk/raw/` stable, so delete that file deliberately rather than incidentally.
+
+Verified against live sources: NUCC 23.0 is 501 KB with 230 physician-grouping rows and
+`207R00000X` present; the centroid file is 890 KB / 33,791 rows; the CMS header still carries
+`npi`, `grd_yr` and `med_sch` after `tolower()`. The NUCC csv contains a latin1 `§` in `Notes`,
+which `readr` warns about — harmless, since `code` and `grouping` are the only columns read and
+both are valid UTF-8.
+
+`jsonlite` is a new direct dependency, for the metastore response.
+
 ## Physician side: three sources, one per-year table
 `clean_physician_data()` builds one table per year from:
 
@@ -621,7 +653,7 @@ instead of scanning nationally 408 times.
 Two scripts. Run both from the repo root:
 
 ```bash
-Rscript tests/test_l2_and_geography.R   # 145 checks -- units
+Rscript tests/test_l2_and_geography.R   # 152 checks -- units
 Rscript tests/test_end_to_end.R         # 37 checks  -- integration
 ```
 
@@ -634,7 +666,7 @@ NY/2019 so the missing-partition guard and a Tier 1 gap are both exercised.
 
 It also found the progress-noise problem below.
 
-`tests/test_l2_and_geography.R` — **145 checks** over the L2 partition helpers, the state
+`tests/test_l2_and_geography.R` — **152 checks** over the L2 partition helpers, the state
 adjacency table, the cross-border physician selector, the NPPES URL table and taxonomy
 union, and the panel gap filler. Run from the repo root:
 
