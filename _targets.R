@@ -1,5 +1,3 @@
-# L2 is partitioned state=XX/year=YYYY/month=MM/day=DD; the template stops at year=
-# because resolve_l2_extract() picks the extract date at run time.
 l2_path <- "/home/pg589/project_pi_cdn7/pg589/l2/transformed/vm2/uniform.parquet/state={state}/year={year}"
 
 targets::tar_source(files = "R")
@@ -33,11 +31,8 @@ controller_max <- crew::crew_controller_local(
 targets::tar_option_set(controller = crew::crew_controller_group(controller_primary,
                                                                  controller_max),
                         garbage_collection = TRUE,
-                        # replaces the deprecated format = "file_fast"
                         trust_timestamps = TRUE)
 
-# Every branched target fans out on controller_max; the aggregating ones materialise a whole
-# year and stay on controller_primary.
 on_max <- targets::tar_resources(
   crew = targets::tar_resources_crew(controller = "my_controller_max")
 )
@@ -46,14 +41,12 @@ list(
   # the state-year grid
   # tar_cue(always) is required, not tidiness: without it the command is unchanged between
   # runs, so targets reuses the cached value and P2V_YEARS / P2V_STATES are silently ignored.
-  targets::tar_target(years,
-                      pipeline_years(),
-                      iteration = "vector",
-                      cue = targets::tar_cue(mode = "always")),
-  targets::tar_target(states,
-                      pipeline_states(),
-                      iteration = "vector",
-                      cue = targets::tar_cue(mode = "always")),
+  targets::tar_target(years, 
+                      2018:2025, 
+                      iteration = "vector"),
+  targets::tar_target(states, 
+                      sort(c(state.abb, "DC")), 
+                      iteration = "vector")
   targets::tar_target(l2_extracts,
                       resolve_l2_extract(states, years, l2_path),
                       pattern = cross(years, states),
