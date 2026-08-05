@@ -38,97 +38,95 @@ on_max <- targets::tar_resources(
 )
 
 list(
-  # the state-year grid
-  # tar_cue(always) is required, not tidiness: without it the command is unchanged between
-  # runs, so targets reuses the cached value and P2V_YEARS / P2V_STATES are silently ignored.
   targets::tar_target(years, 
                       2018:2025, 
                       iteration = "vector"),
   targets::tar_target(states, 
                       sort(c(state.abb, "DC")), 
                       iteration = "vector")
-  targets::tar_target(l2_extracts,
-                      resolve_l2_extract(states, years, l2_path),
-                      pattern = cross(years, states),
-                      format = "file",
-                      resources = on_max),
-
+  
+  , targets::tar_target(l2_extracts,
+                        resolve_l2_extract(states, years, l2_path),
+                        pattern = cross(years, states),
+                        format = "file",
+                        resources = on_max)
+  
   # NPPES downloads. Left on controller_primary deliberately: these are one-time and
   # idempotent, so parallelism buys almost nothing, and NBER already 403s some requests.
-  targets::tar_target(nppes_core_files,
-                      download_nppes_core(years),
-                      pattern = map(years),
-                      format = "file"),
-  targets::tar_target(nppes_taxonomy_files,
-                      download_nppes_taxonomy(),
-                      format = "file"),
-
+  , targets::tar_target(nppes_core_files,
+                        download_nppes_core(years),
+                        pattern = map(years),
+                        format = "file")
+  , targets::tar_target(nppes_taxonomy_files,
+                        download_nppes_taxonomy(),
+                        format = "file")
+  
   # manually placed inputs
-  targets::tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv",
-                      format = "file"),
-  targets::tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv",
-                      format = "file"),
-  targets::tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv",
-                      format = "file"),
-  targets::tar_target(labelled_training_files,
-                      list.files("trunk/raw/labelled_training_data/",
-                                 full.names = TRUE),
-                      format = "file"),
-
+  , targets::tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv",
+                        format = "file")
+  , targets::tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv",
+                        format = "file")
+  , targets::tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv",
+                        format = "file")
+  , targets::tar_target(labelled_training_files,
+                        list.files("trunk/raw/labelled_training_data/",
+                                   full.names = TRUE),
+                        format = "file")
+  
   # physician side, one table per year
-  targets::tar_target(physician_data,
-                      clean_physician_data(nppes_core_files, nppes_taxonomy_files,
-                                           cms_file, nucc_taxonomy_file, years),
-                      pattern = map(years, nppes_core_files),
-                      format = "file",
-                      resources = on_max),
-  targets::tar_target(cms_npi_conflicts,
-                      count_cms_npi_conflicts(cms_file)),
-
+  , targets::tar_target(physician_data,
+                        clean_physician_data(nppes_core_files, nppes_taxonomy_files,
+                                             cms_file, nucc_taxonomy_file, years),
+                        pattern = map(years, nppes_core_files),
+                        format = "file",
+                        resources = on_max)
+  , targets::tar_target(cms_npi_conflicts,
+                        count_cms_npi_conflicts(cms_file))
+  
   # Stage A -- in-state candidate pairs, one branch per state-year
-  targets::tar_target(lsh_pairs,
-                      locality_sensitive_hash(physician_data, l2_extracts,
-                                              zip_centroid_file,
-                                              nthread = lsh_nthread),
-                      pattern = map(l2_extracts),
-                      format = "file",
-                      resources = on_max),
-
-  targets::tar_target(rf_model,
-                      train_rf_model(labelled_training_files)),
-
+  , targets::tar_target(lsh_pairs,
+                        locality_sensitive_hash(physician_data, l2_extracts,
+                                                zip_centroid_file,
+                                                nthread = lsh_nthread),
+                        pattern = map(l2_extracts),
+                        format = "file",
+                        resources = on_max)
+  
+  , targets::tar_target(rf_model,
+                        train_rf_model(labelled_training_files))
+  
   # Stage B -- unmatched physicians retried against bordering states
-  targets::tar_target(cross_border_pairs,
-                      lsh_cross_border(physician_data, l2_extracts, lsh_pairs,
-                                       l2_path, zip_centroid_file,
-                                       nthread = lsh_nthread),
-                      pattern = map(l2_extracts),
-                      format = "file",
-                      resources = on_max),
-
+  , targets::tar_target(cross_border_pairs,
+                        lsh_cross_border(physician_data, l2_extracts, lsh_pairs,
+                                         l2_path, zip_centroid_file,
+                                         nthread = lsh_nthread),
+                        pattern = map(l2_extracts),
+                        format = "file",
+                        resources = on_max)
+  
   # Stage C -- combine both passes for a year, compute n, predict.
   # packages = "grf" is required, not decoration: score_pairs() calls predict() on a model
   # built in another target, and S3 dispatch needs grf loaded to find the method.
-  targets::tar_target(scored_pairs,
-                      score_pairs(lsh_pairs, cross_border_pairs, rf_model, years),
-                      pattern = map(years),
-                      packages = "grf",
-                      format = "file"),
-
+  , targets::tar_target(scored_pairs,
+                        score_pairs(lsh_pairs, cross_border_pairs, rf_model, years),
+                        pattern = map(years),
+                        packages = "grf",
+                        format = "file")
+  
   # Stage D -- collapse to physician-year, then to one best match per physician
-  targets::tar_target(physician_year_panel_data,
-                      physician_year_panel(scored_pairs),
-                      format = "file"),
-  targets::tar_target(physician_matches,
-                      reconcile_physician_matches(physician_year_panel_data),
-                      format = "file"),
-
+  , targets::tar_target(physician_year_panel_data,
+                        physician_year_panel(scored_pairs),
+                        format = "file")
+  , targets::tar_target(physician_matches,
+                        reconcile_physician_matches(physician_year_panel_data),
+                        format = "file")
+  
   # the panel again, with confident gaps filled
-  targets::tar_target(physician_year_panel_filled,
-                      fill_panel_gaps(physician_year_panel_data, physician_data,
-                                      l2_extracts),
-                      format = "file"),
-  targets::tar_target(panel_gap_summary,
-                      summarize_panel_gaps(physician_year_panel_data, physician_data,
-                                           l2_extracts))
+  , targets::tar_target(physician_year_panel_filled,
+                        fill_panel_gaps(physician_year_panel_data, physician_data,
+                                        l2_extracts),
+                        format = "file")
+  , targets::tar_target(panel_gap_summary,
+                        summarize_panel_gaps(physician_year_panel_data, physician_data,
+                                             l2_extracts))
 )
