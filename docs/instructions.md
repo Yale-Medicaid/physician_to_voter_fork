@@ -26,18 +26,24 @@ The direct dependencies, and the versions the code has been validated against, a
 
 ## Step 3: Put the manually placed inputs in place
 
-Most inputs download themselves. Four do not, and go under `trunk/raw/`:
+Almost everything downloads itself. Only two things need placing:
 
 | Input | Expected location | How to obtain |
 | --- | --- | --- |
 | L2 voter file | outside the repo, on the HPC | licensed — see below |
-| CMS Doctors and Clinicians | `trunk/raw/DAC_NationalDownloadableFile.csv` | public, from CMS |
-| NUCC taxonomy crosswalk | `trunk/raw/nucc_taxonomy_230.csv` | public, from [NUCC](https://www.nucc.org/) |
-| NBER ZCTA centroids | `trunk/raw/gaz2024zcta5centroid.csv` | `https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv` |
 | Labelled training data | `trunk/raw/labelled_training_data/` | produced by `scripts/label.R`; the existing labels are human judgements and cannot be regenerated |
 
-NPPES `core` and taxonomy files are **not** in this table — the pipeline downloads them from
-NBER on demand and skips the fetch if the file is already present.
+Everything else is fetched on demand into `trunk/raw/` and skipped if already present: the
+NPPES `core` and `ptaxcode` files from NBER, the CMS Doctors and Clinicians file (~600 MB),
+the NUCC taxonomy crosswalk, and the NBER ZCTA centroids.
+
+!!! note "The CMS file is not pinned"
+
+    Its URL embeds a content hash that changes every release, so it is resolved from the CMS
+    metastore API at run time. That means you get whatever CMS currently publishes, and
+    `grd_yr` / `med_sch` can change between fresh checkouts without anything in the repository
+    changing. A file already on disk is never re-fetched, so an existing `trunk/raw/` stays
+    stable until you delete it. NUCC and NBER are pinned to specific versions.
 
 !!! danger "The L2 voter file is licensed"
 
