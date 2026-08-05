@@ -62,11 +62,14 @@ list(
                         format = "file")
   
   # manually placed inputs
-  , targets::tar_target(cms_file, "trunk/raw/DAC_NationalDownloadableFile.csv",
+  , targets::tar_target(cms_file, 
+                        "trunk/raw/DAC_NationalDownloadableFile.csv",
                         format = "file")
-  , targets::tar_target(nucc_taxonomy_file, "trunk/raw/nucc_taxonomy_230.csv",
+  , targets::tar_target(nucc_taxonomy_file, 
+                        "trunk/raw/nucc_taxonomy_230.csv",
                         format = "file")
-  , targets::tar_target(zip_centroid_file, "trunk/raw/gaz2024zcta5centroid.csv",
+  , targets::tar_target(zip_centroid_file, 
+                        "trunk/raw/gaz2024zcta5centroid.csv",
                         format = "file")
   , targets::tar_target(labelled_training_files,
                         list.files("trunk/raw/labelled_training_data/",
