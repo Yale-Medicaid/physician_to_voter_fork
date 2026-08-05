@@ -61,16 +61,19 @@ list(
                         download_nppes_taxonomy(),
                         format = "file")
   
-  # manually placed inputs
-  , targets::tar_target(cms_file, 
-                        "trunk/raw/DAC_NationalDownloadableFile.csv",
+  # Reference inputs, downloaded on demand and idempotent. On controller_primary with the
+  # NPPES fetches: one-time, and the CMS file is ~600 MB.
+  , targets::tar_target(cms_file,
+                        download_cms_dac(),
                         format = "file")
-  , targets::tar_target(nucc_taxonomy_file, 
-                        "trunk/raw/nucc_taxonomy_230.csv",
+  , targets::tar_target(nucc_taxonomy_file,
+                        download_nucc_taxonomy(),
                         format = "file")
-  , targets::tar_target(zip_centroid_file, 
-                        "trunk/raw/gaz2024zcta5centroid.csv",
+  , targets::tar_target(zip_centroid_file,
+                        download_zip_centroids(),
                         format = "file")
+
+  # still placed by hand: the labels are human judgements nothing can regenerate
   , targets::tar_target(labelled_training_files,
                         list.files("trunk/raw/labelled_training_data/",
                                    full.names = TRUE),
