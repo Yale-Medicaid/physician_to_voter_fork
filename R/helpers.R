@@ -102,3 +102,39 @@ pipeline_states <- function() {
   }
   toupper(trimws(strsplit(v, ",", fixed = TRUE)[[1]]))
 }
+
+
+#' Fetch a file over HTTP, once
+#'
+#' @description Idempotent. Downloads land on a `.part` name first, so an interrupted
+#' transfer cannot leave a truncated file that the check would accept forever.
+#'
+#' @param url file to fetch
+#' @param out_dir directory to download into
+#' @param timeout seconds to allow; the default `options(timeout=)` of 60 is far too short
+#'
+#' @return path to the downloaded file
+download_once <- function(url, out_dir, timeout = 3600) {
+  dest <- file.path(out_dir, basename(url))
+
+  if (file.exists(dest)) {
+    return(dest)
+  }
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  old <- options(timeout = timeout)
+  on.exit(options(old), add = TRUE)
+
+  part <- paste0(dest, ".part")
+  utils::download.file(url, destfile = part, mode = "wb", quiet = TRUE)
+
+  assertthat::assert_that(
+    file.exists(part) && file.size(part) > 0,
+    msg = cli::format_error("Downloaded an empty file from {.url {url}}")
+  )
+
+  file.rename(part, dest)
+
+  dest
+}
