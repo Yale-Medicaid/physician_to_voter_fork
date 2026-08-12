@@ -21,27 +21,29 @@ clone has somewhere to put data; the data itself never enters the repository.
 
 | Path | Placed how | Source |
 | --- | --- | --- |
-| `nppes/` | **downloaded** by the pipeline | NBER's NPPES mirror — per-year `core` files plus four `ptaxcode` extracts |
-| `DAC_NationalDownloadableFile.csv` | by hand | Public (CMS "Doctors and Clinicians", formerly Physician Compare) |
-| `nucc_taxonomy_230.csv` | by hand | Public ([NUCC](https://www.nucc.org/) taxonomy crosswalk) |
-| `gaz2024zcta5centroid.csv` | by hand | Public ([NBER ZIP Code Distance Database](https://www.nber.org/research/data/zip-code-distance-database)) |
-| `labelled_training_data/` | by hand | Hand- and rule-labelled RF training pairs |
-| `unlabelled_training_data/` | by hand | Labelling partitions, pre-annotation |
+| `nppes/` | **downloaded** | NBER's NPPES mirror — per-year `core` files plus four `ptaxcode` extracts |
+| `DAC_NationalDownloadableFile.csv` | **downloaded** | CMS "Doctors and Clinicians" (~600 MB) |
+| `nucc_taxonomy_230.csv` | **downloaded** | [NUCC](https://www.nucc.org/) taxonomy crosswalk |
+| `gaz2024zcta5centroid.csv` | **downloaded** | [NBER ZIP Code Distance Database](https://www.nber.org/research/data/zip-code-distance-database) |
+| `labelled_training_data/` | **by hand** | Hand- and rule-labelled RF training pairs |
+| `unlabelled_training_data/` | **by hand** | Labelling partitions, pre-annotation |
 
-Only `nppes/` is automatic. `download_nppes_core()` and `download_nppes_taxonomy()`
-fetch into it and are idempotent — an already-present file is returned untouched,
-so re-running the pipeline does not re-fetch. Everything else in the table has to
-be placed before `tar_make()` will get anywhere.
+Everything except the two training-data directories fetches itself. All downloads are
+idempotent — an already-present file is returned untouched, so re-running does not
+re-fetch, and a `.part` staging name means an interrupted transfer cannot leave a
+truncated file that the check would then accept forever.
 
-The ZCTA centroid file is 890 KB. Fetch it with:
+ZIP-to-ZIP distances are computed from the centroids rather than downloaded, so none
+of NBER's large pre-computed distance files are needed.
 
-```bash
-curl -o trunk/raw/gaz2024zcta5centroid.csv \
-  https://data.nber.org/distance/zip/2024/centroid/gaz2024zcta5centroid.csv
-```
-
-ZIP-to-ZIP distances are computed from these centroids rather than downloaded, so
-none of NBER's large pre-computed distance files are needed.
+> **The CMS file is a moving target.** Its URL embeds a content hash that changes
+> every release, so it is resolved from the CMS metastore API at run time rather than
+> pinned. Whatever CMS currently publishes is what you get — `grd_yr` and `med_sch`,
+> and therefore matches, can change without anything in this repository changing.
+> Idempotency is what keeps a given `trunk/raw/` stable, so delete that file
+> deliberately rather than incidentally. NUCC and NBER *are* pinned; see
+> `R/reference_data.R` for why the NUCC version in particular should not be bumped
+> casually.
 
 The two training-data directories sit under `raw/` rather than `derived/`
 because although they began as samples of the LSH output, the labels in them are

@@ -49,7 +49,7 @@ nppes_core_url <- function(year) {
 #'
 #' @return path to the downloaded file
 download_nppes_core <- function(year, out_dir = "trunk/raw/nppes", timeout = 3600) {
-  download_nber_file(nppes_core_url(year)$url, out_dir = out_dir, timeout = timeout)
+  download_once(nppes_core_url(year)$url, out_dir = out_dir, timeout = timeout)
 }
 
 
@@ -81,7 +81,7 @@ nppes_taxonomy_urls <- function() {
 #' @return paths, newest vintage first
 download_nppes_taxonomy <- function(out_dir = "trunk/raw/nppes", timeout = 3600) {
   nppes_taxonomy_urls()$url |>
-    purrr::map_chr(\(u) download_nber_file(u, out_dir = out_dir, timeout = timeout))
+    purrr::map_chr(\(u) download_once(u, out_dir = out_dir, timeout = timeout))
 }
 
 
@@ -121,42 +121,6 @@ read_taxonomy_union <- function(paths) {
     }) |>
     purrr::list_rbind() |>
     dplyr::distinct(npi, .keep_all = TRUE)
-}
-
-
-#' Fetch a file from NBER, once
-#'
-#' @description Idempotent. Downloads land on a `.part` name first, so an interrupted
-#' transfer cannot leave a truncated file that the check would accept forever.
-#'
-#' @param url file to fetch
-#' @param out_dir directory to download into
-#' @param timeout seconds to allow; the default `options(timeout=)` of 60 is far too short
-#'
-#' @return path to the downloaded file
-download_nber_file <- function(url, out_dir = "trunk/raw/nppes", timeout = 3600) {
-  dest <- file.path(out_dir, basename(url))
-
-  if (file.exists(dest)) {
-    return(dest)
-  }
-
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  old <- options(timeout = timeout)
-  on.exit(options(old), add = TRUE)
-
-  part <- paste0(dest, ".part")
-  utils::download.file(url, destfile = part, mode = "wb", quiet = TRUE)
-
-  assertthat::assert_that(
-    file.exists(part) && file.size(part) > 0,
-    msg = cli::format_error("Downloaded an empty file from {.url {url}}")
-  )
-
-  file.rename(part, dest)
-
-  dest
 }
 
 

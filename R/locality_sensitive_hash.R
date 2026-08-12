@@ -176,7 +176,7 @@ match_pairs <- function(phys_data, voter_dataset, zip_centroid_file,
     dplyr::mutate(
       Voters_MiddleName = dplyr::coalesce(Voters_MiddleName, ""),
       mid_nm = dplyr::coalesce(mid_nm, ""),
-      year_dist = grd_yr - lubridate::year(Voters_BirthDate)
+      year_dist = grd_yr - lubridate::year(lubridate::mdy(Voters_BirthDate))
     )
 
   EARTH_RADIUS_MILES <- 6371/1.609344   # 6371 km -- the radius NBER's files match
