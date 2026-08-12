@@ -49,17 +49,21 @@ clean_physician_data <- function(nppes_core_file, taxonomy_files, cms_file, nucc
     dplyr::select(npi, provider_first_name = pfname, provider_middle_name = pmname,
                   provider_last_name = plname, state, zip, addr_source)
 
-  full_data <- providers |>
+  providers |>
     dplyr::mutate(npi = as.numeric(npi)) |>
     dplyr::anti_join(conflicted_npi, by = dplyr::join_by(npi)) |>
-    dplyr::left_join(taxonomy, by = dplyr::join_by(npi)) |>
-    dplyr::left_join(nucc_data, by = dplyr::join_by(taxonomy_code == code)) |>
-    dplyr::left_join(cms_data, by = dplyr::join_by(npi)) |>
-    dplyr::filter(grouping == "Allopathic & Osteopathic Physicians") |>
-    dplyr::mutate(year = as.integer(year))
-
-  arrow::write_dataset(full_data, out_pth, partitioning = "state")
-
+    dplyr::left_join(taxonomy, 
+                     by = dplyr::join_by(npi)) |>
+    dplyr::left_join(nucc_data, 
+                     by = dplyr::join_by(taxonomy_code == code)) |>
+    dplyr::left_join(cms_data, 
+                     by = dplyr::join_by(npi)) |>
+    dplyr::filter(grouping == "Allopathic & Osteopathic Physicians",
+                  state %in% c(state.abb, "DC")) |>
+    dplyr::mutate(year = as.integer(year)) |>
+    dplyr::group_by(state) |>
+    arrow::write_dataset(out_pth)
+  
   return_out_pth_check_distinct(out_pth, distinct_col = "npi")
 }
 
