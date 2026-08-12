@@ -234,6 +234,60 @@ ok("tiers sum to the gap count",
    summary_tbl$n_tier_1 + summary_tbl$n_tier_2 + summary_tbl$n_tier_3 ==
      summary_tbl$n_gaps)
 
+## ------------------------------------------------------------- diagnostics
+## Fed the real filled panel this file just built, so the handoff is covered too.
+cat("\n== diagnostics, fed the real panel ==\n")
+diag_panel <- if (!is.null(filled)) filled else panel
+
+rt <- match_rate_by_threshold(diag_panel, phys_pths, l2_paths,
+                              thresholds = seq(0, 0.9, by = 0.1))
+ok("match rate table has a row per year-threshold",
+   nrow(rt) == length(unique(rt$year)) * 10)
+ok("percentages are bounded",
+   all(rt$pct_matched >= 0 & rt$pct_matched <= 100, na.rm = TRUE) &&
+     all(rt$pct_matched_l2 >= 0 & rt$pct_matched_l2 <= 100, na.rm = TRUE))
+ok("match count is non-increasing in the threshold",
+   all(unlist(lapply(split(rt, rt$year), \(d) {
+     d <- d[order(d$threshold), ]
+     all(diff(d$n_matched) <= 0)
+   }))))
+ok("at threshold 0 every scored physician-year counts",
+   {
+     b <- best_scored_per_physician_year(diag_panel)
+     z <- rt[rt$threshold == 0, ]
+     all(purrr::map2_lgl(z$year, z$n_matched,
+                         \(y, k) k == sum(b$year == y & !is.na(b$match_prob))))
+   })
+ok("the L2-available denominator is never larger than the full one",
+   all(rt$n_physicians_l2 <= rt$n_physicians))
+ok("2019 has a smaller L2 denominator than 2018 -- NY/2019 is absent",
+   rt$n_physicians_l2[rt$year == 2019L][1] < rt$n_physicians[rt$year == 2019L][1])
+
+fig <- plot_match_rate_curve(rt, out_dir = "diag_out")
+ok("the figure writes a pdf and a png",
+   length(fig) == 2 && all(file.exists(fig)) && all(file.size(fig) > 0))
+
+st <- match_quality_by_state_year(diag_panel, phys_pths, min_prob = 0.5)
+ok("state-year table covers every state-year in physician_data",
+   nrow(st) == nrow(distinct(phys_all, state, year)))
+ok("no state-year reports more matches than physicians",
+   all(st$n_matched <= st$n_physicians))
+
+fs <- match_feature_summary(diag_panel)
+ok("feature summary returns quantiles and candidate-count buckets",
+   is.list(fs) && setequal(names(fs), c("quantiles", "by_candidate_count")))
+ok("quantiles cover all four features",
+   setequal(fs$quantiles$variable,
+            c("match_prob", "zip_dist", "full_name_sim", "n")))
+
+vi <- rf_variable_importance(model)
+ok("importance has one row per RF feature", nrow(vi) == 8)
+ok("features are named, not feature_1..n", !any(grepl("^feature_[0-9]+$", vi$feature)))
+ok("importance is sorted descending", !is.unsorted(rev(vi$importance)))
+ok("occupation indicators appear among the features",
+   all(c("occ_medical", "occ_unknown") %in% vi$feature))
+ok("state_agree is NOT a feature", !("state_agree" %in% vi$feature))
+
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
             FAIL, if (FAIL == 1) "" else "s"))
