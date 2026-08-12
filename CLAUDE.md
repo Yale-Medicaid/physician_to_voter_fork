@@ -654,7 +654,7 @@ Two scripts. Run both from the repo root:
 
 ```bash
 Rscript tests/test_l2_and_geography.R   # 152 checks -- units
-Rscript tests/test_end_to_end.R         # 66 checks  -- integration
+Rscript tests/test_end_to_end.R         # 74 checks  -- integration
 ```
 
 `tests/test_end_to_end.R` chains every stage on the **real** output of the one before it:
@@ -996,10 +996,34 @@ after the gap year** — the identity is bracketed, not extrapolated off the end
 Defined from the fill's own voter id rather than from a probability cutoff, so it needs no
 assumption about which `min_fill_prob` the run used.
 
-**Fills add a constant at every threshold, not a curve.** They carry no `match_prob`, so the
-same set enters at every cutoff. That is the point — a confident fill is a match however
-strictly the scored ones are cut, and the visible effect is that the right-hand end stops
-falling as far.
+**Two readings, both in the table.** `n_matched_incl_fills` counts a qualifying fill at every
+cutoff — fills have no probability, so the same set enters throughout. `n_matched_incl_fills_q`
+counts a fill only where its **inherited** quality clears the cutoff, putting it on the
+probability axis so that a fill sourced from a 0.93 anchor drops out at 0.95 exactly as a
+scored 0.93 match would. The second is the conservative reading and usually the more useful;
+the figure facets both.
+
+**Inherited quality comes from the anchors, not from the fill.** `classify_fill_confidence()`
+reports `n_anchors` and the mean/min/max `match_prob` of the physician's scored rows for the
+*same* `LALVOTERID` clearing `min_anchor_prob`. `fill_confidence` exposes this per fill, so one
+resting on a single source year can be told from one resting on four.
+
+Three things about it worth keeping:
+
+- **`min_anchor_prob` must match the run's `min_fill_prob`** (both default 0.9). Set it higher
+  and some fills show no anchors, leaving `anchor_prob_mean` as `NA` — which then never counts
+  toward the quality-gated numerator. The integration test exercises exactly this: its fixture
+  fills at 0.5, so the diagnostics are told 0.5, and a separate check confirms that raising the
+  cutoff above every anchor yields all-`NA`.
+- **Filtering the anchors on probability is deliberate**, rather than averaging every scored row
+  for that voter. A physician can hold the same voter at 0.95 one year and 0.4 another, and only
+  the first was ever an anchor; averaging both would misreport the fill's provenance.
+- **The inherited value is an upper bound.** It carries no penalty for the extrapolation itself,
+  so a filled year labelled 0.97 is not as trustworthy as an observed year labelled 0.97.
+
+`min()`/`max()` inside that `summarize()` are guarded with `if (dplyr::n())`, because dplyr
+evaluates the expressions once on a zero-row group to infer output types and both warn and
+return `±Inf` on nothing.
 
 **No double counting.** `classify_panel_gaps()` builds the gap universe by anti-joining the
 panel, so a filled row never coexists with a scored row for the same physician-year.
