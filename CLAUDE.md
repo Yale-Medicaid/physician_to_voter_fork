@@ -654,7 +654,7 @@ Two scripts. Run both from the repo root:
 
 ```bash
 Rscript tests/test_l2_and_geography.R   # 152 checks -- units
-Rscript tests/test_end_to_end.R         # 53 checks  -- integration
+Rscript tests/test_end_to_end.R         # 66 checks  -- integration
 ```
 
 `tests/test_end_to_end.R` chains every stage on the **real** output of the one before it:
@@ -985,6 +985,39 @@ Three decisions worth keeping:
 `match_quality_states` is the one most likely to catch a real problem: a state whose extract
 was malformed shows up as a match rate far below its neighbours, which the national curve
 averages away.
+
+### Counting confident fills as matches
+`match_rate_table_with_fills` / `match_rate_figure_with_fills` repeat the curve with a
+confidently filled year counted as a match. Five rules in one long table so they can be
+compared rather than chosen blind: `none`, `interior`, `tier1`, `interior_or_tier1`, `any`.
+
+**`interior` means the physician has a scored row for the *same* `LALVOTERID` both before and
+after the gap year** — the identity is bracketed, not extrapolated off the end of the panel.
+Defined from the fill's own voter id rather than from a probability cutoff, so it needs no
+assumption about which `min_fill_prob` the run used.
+
+**Fills add a constant at every threshold, not a curve.** They carry no `match_prob`, so the
+same set enters at every cutoff. That is the point — a confident fill is a match however
+strictly the scored ones are cut, and the visible effect is that the right-hand end stops
+falling as far.
+
+**No double counting.** `classify_panel_gaps()` builds the gap universe by anti-joining the
+panel, so a filled row never coexists with a scored row for the same physician-year.
+
+**The with-fills figure uses the full `n_physicians` denominator**, not `n_physicians_l2`.
+Tier 1 fills exist precisely where L2 was missing, so dividing them by a denominator that has
+already removed those physician-years double-counts the correction and can exceed 100%.
+
+#### ⚠ What counting fills cannot rescue
+A fill exists only where the physician-year was **absent from the panel entirely**. A
+physician-year holding one weak candidate — `match_prob` of 0.02, say — is not a gap, so it was
+never a fill candidate. At a cutoff of 0.9 it counts as neither matched nor filled.
+
+Making fills rescue those would mean re-deriving the gap universe at each threshold, i.e.
+changing `fill_panel_gaps()` to take a cutoff. That is a fourth deferred item: it invalidates
+`physician_year_panel_filled` and `panel_gap_summary`. It would also raise a question the
+current design sidesteps — whether a physician with a weak scored match should be allowed a
+*different* voter by fill, which the `unambiguous` gate currently forbids.
 
 ### ⚠ Deferred: changes that would force a re-run
 Recorded rather than made, because each invalidates existing targets.
