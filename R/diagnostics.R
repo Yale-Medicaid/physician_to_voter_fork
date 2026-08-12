@@ -1,0 +1,274 @@
+#' Best scored row per physician-year
+#'
+#' @description The shared reduction behind the diagnostics: one row per (npi, year), the
+#' highest-probability candidate. Ties broken by `LALVOTERID` then `year`, the same
+#' deterministic order `reconcile_physician_matches()` uses.
+#'
+#' Filled rows are excluded here and counted separately. They carry an identity but no
+#' `match_prob`, so they cannot sit on a probability axis -- treating them as 0 would
+#' understate them and as 1 would overstate them.
+#'
+#' @param panel path to `physician_year_panel_filled` (or the unfilled panel)
+#'
+#' @return a tibble of one row per npi-year, plus a `filled` flag column if present
+best_scored_per_physician_year <- function(panel) {
+  cols <- names(arrow::open_dataset(panel))
+  wanted <- intersect(c("npi", "year", "LALVOTERID", "match_prob", "state_agree",
+                        "zip_dist", "full_name_sim", "n", "tied", "filled", "fill_tier"),
+                      cols)
+
+  d <- arrow::open_dataset(panel) |>
+    dplyr::select(dplyr::all_of(wanted)) |>
+    dplyr::collect()
+
+  if (!"filled" %in% names(d)) {
+    d$filled <- FALSE
+  }
+
+  d |>
+    dplyr::filter(!filled) |>
+    dplyr::arrange(dplyr::desc(match_prob), LALVOTERID, year) |>
+    dplyr::group_by(npi, year) |>
+    dplyr::slice_head(n = 1) |>
+    dplyr::ungroup()
+}
+
+
+#' Physician-years available to match, by year
+#'
+#' @description The denominator. Two of them, because they answer different questions:
+#' `n_physicians` is every physician-year in `physician_data`, and
+#' `n_physicians_l2` excludes those whose practice state had no L2 partition that year --
+#' 2024 MD, MS and NV. Reporting only the first makes 2024 look like a matching failure when
+#' it is a data gap.
+#'
+#' @param physician_data paths to the per-year physician datasets
+#' @param l2_extracts resolved L2 leaf paths
+#'
+#' @return a tibble of `year`, `n_physicians`, `n_physicians_l2`
+physician_year_universe <- function(physician_data, l2_extracts) {
+  universe <- arrow::open_dataset(unique(dirname(physician_data))) |>
+    dplyr::select(npi, year, state) |>
+    dplyr::distinct() |>
+    dplyr::collect() |>
+    dplyr::mutate(year = as.integer(year))
+
+  l2_present <- tibble::tibble(state = get_l2_state(l2_extracts),
+                               year = as.integer(get_l2_year(l2_extracts)),
+                               l2 = TRUE) |>
+    dplyr::distinct()
+
+  universe |>
+    dplyr::left_join(l2_present, by = dplyr::join_by(state, year)) |>
+    dplyr::group_by(year) |>
+    dplyr::summarize(n_physicians = dplyr::n_distinct(npi),
+                     n_physicians_l2 = dplyr::n_distinct(npi[!is.na(l2)]),
+                     .groups = "drop")
+}
+
+
+#' Match rate as a function of the minimum accepted probability
+#'
+#' @description The headline diagnostic: for each year and each candidate cutoff, what share
+#' of physicians end up with a match. Read it as a precision/recall dial -- moving right
+#' discards weaker matches, and the slope tells you how much you give up to do so.
+#'
+#' A steep drop somewhere in the middle means the model is genuinely separating matches from
+#' non-matches. A gentle, near-linear decline means it is hedging, and no cutoff is defensible.
+#'
+#' Pooled figures are recoverable by summing the counts rather than averaging the percentages:
+#' `sum(n_matched)/sum(n_physicians)`.
+#'
+#' @param panel path to `physician_year_panel_filled`
+#' @param physician_data paths to the per-year physician datasets, for the denominator
+#' @param l2_extracts resolved L2 leaf paths, for the L2-available denominator
+#' @param thresholds probability cutoffs to evaluate
+#'
+#' @return a tibble of one row per year-threshold
+match_rate_by_threshold <- function(panel, physician_data, l2_extracts,
+                                    thresholds = seq(0, 0.99, by = 0.01)) {
+  best <- best_scored_per_physician_year(panel)
+  denom <- physician_year_universe(physician_data, l2_extracts)
+
+  filled_counts <- arrow::open_dataset(panel) |>
+    dplyr::select(dplyr::any_of(c("npi", "year", "filled"))) |>
+    dplyr::collect()
+  filled_counts <- if ("filled" %in% names(filled_counts)) {
+    filled_counts |>
+      dplyr::filter(filled) |>
+      dplyr::group_by(year) |>
+      dplyr::summarize(n_filled = dplyr::n_distinct(npi), .groups = "drop")
+  } else {
+    tibble::tibble(year = integer(0), n_filled = integer(0))
+  }
+
+  grid <- tidyr::expand_grid(year = sort(unique(best$year)), threshold = thresholds)
+
+  grid |>
+    dplyr::mutate(
+      n_matched = purrr::map2_int(year, threshold, \(y, t)
+        sum(best$year == y & !is.na(best$match_prob) & best$match_prob >= t)),
+      n_cross_border = purrr::map2_int(year, threshold, \(y, t)
+        sum(best$year == y & !is.na(best$match_prob) & best$match_prob >= t &
+              !is.na(best$state_agree) & !best$state_agree))
+    ) |>
+    dplyr::left_join(denom, by = dplyr::join_by(year)) |>
+    dplyr::left_join(filled_counts, by = dplyr::join_by(year)) |>
+    dplyr::mutate(
+      n_filled = dplyr::coalesce(n_filled, 0L),
+      pct_matched = 100*n_matched/n_physicians,
+      pct_matched_l2 = 100*n_matched/n_physicians_l2,
+      pct_cross_border = dplyr::if_else(n_matched > 0,
+                                       100*n_cross_border/n_matched, NA_real_)
+    )
+}
+
+
+#' Plot the match-rate curve
+#'
+#' @description One line per year, plus a pooled line. Writes both a pdf and a png -- the pdf
+#' for anything that ends up in a manuscript, the png because it is what actually gets pasted
+#' into a message.
+#'
+#' Uses `pct_matched_l2`, i.e. the denominator that excludes physician-years with no L2
+#' partition, so the 2024 line is comparable with the rest instead of sitting artificially low.
+#'
+#' @param rate_table tibble from `match_rate_by_threshold()`
+#' @param out_dir directory to write into
+#'
+#' @return the paths written
+plot_match_rate_curve <- function(rate_table, out_dir = "trunk/analysis") {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  pooled <- rate_table |>
+    dplyr::group_by(threshold) |>
+    dplyr::summarize(pct_matched_l2 = 100*sum(n_matched)/sum(n_physicians_l2),
+                     .groups = "drop")
+
+  p <- ggplot2::ggplot(rate_table,
+                       ggplot2::aes(x = threshold, y = pct_matched_l2,
+                                    group = factor(year), colour = factor(year))) +
+    ggplot2::geom_line(alpha = 0.65) +
+    ggplot2::geom_line(data = pooled,
+                       ggplot2::aes(x = threshold, y = pct_matched_l2),
+                       inherit.aes = FALSE, linewidth = 1.1, colour = "black") +
+    ggplot2::scale_y_continuous(limits = c(0, 100)) +
+    ggplot2::labs(x = "Minimum accepted match probability",
+                  y = "Physicians with a match (%)",
+                  colour = "Year",
+                  title = "Match rate by minimum match quality",
+                  subtitle = paste("Black line pools all years. Denominator excludes",
+                                   "physician-years with no L2 partition.")) +
+    ggplot2::theme_minimal()
+
+  pdf_pth <- file.path(out_dir, "match_rate_by_threshold.pdf")
+  png_pth <- file.path(out_dir, "match_rate_by_threshold.png")
+  ggplot2::ggsave(pdf_pth, p, width = 7, height = 4.5)
+  ggplot2::ggsave(png_pth, p, width = 7, height = 4.5, dpi = 150)
+
+  c(pdf_pth, png_pth)
+}
+
+
+#' Match quality per state-year
+#'
+#' @description Where a systematic problem would actually show up. A state whose L2 extract
+#' was malformed, or whose name fields are encoded differently, appears here as a match rate
+#' far below its neighbours -- which the national curve would average away.
+#'
+#' The panel carries no `state` column, so practice state comes from joining back to
+#' `physician_data`.
+#'
+#' @param panel path to `physician_year_panel_filled`
+#' @param physician_data paths to the per-year physician datasets
+#' @param min_prob cutoff at which the match rate is reported
+#'
+#' @return a tibble of one row per state-year
+match_quality_by_state_year <- function(panel, physician_data, min_prob = 0.9) {
+  universe <- arrow::open_dataset(unique(dirname(physician_data))) |>
+    dplyr::select(npi, year, state) |>
+    dplyr::distinct() |>
+    dplyr::collect() |>
+    dplyr::mutate(year = as.integer(year))
+
+  best <- best_scored_per_physician_year(panel) |>
+    dplyr::mutate(year = as.integer(year))
+
+  universe |>
+    dplyr::left_join(best, by = dplyr::join_by(npi, year)) |>
+    dplyr::group_by(state, year) |>
+    dplyr::summarize(
+      n_physicians = dplyr::n_distinct(npi),
+      n_any_candidate = sum(!is.na(match_prob)),
+      n_matched = sum(!is.na(match_prob) & match_prob >= min_prob),
+      pct_matched = 100*n_matched/n_physicians,
+      median_match_prob = stats::median(match_prob, na.rm = TRUE),
+      median_zip_dist = stats::median(zip_dist, na.rm = TRUE),
+      pct_cross_border = 100*mean(!state_agree, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(pct_matched)
+}
+
+
+#' Distribution of the match features among best candidates
+#'
+#' @description Quantiles of everything the model saw, plus `match_prob` by candidate-count
+#' bucket. That last one is the first look at the `n` dilution recorded in CLAUDE.md: if mean
+#' `match_prob` falls sharply as `n` rises, candidate count is doing more work than name
+#' commonness alone would justify.
+#'
+#' @param panel path to `physician_year_panel_filled`
+#'
+#' @return a list of two tibbles, `quantiles` and `by_candidate_count`
+match_feature_summary <- function(panel) {
+  best <- best_scored_per_physician_year(panel)
+  probs <- c(0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99)
+
+  quantiles <- c("match_prob", "zip_dist", "full_name_sim", "n") |>
+    purrr::map(\(v) tibble::tibble(
+      variable = v,
+      quantile = probs,
+      value = stats::quantile(best[[v]], probs = probs, na.rm = TRUE),
+      pct_na = 100*mean(is.na(best[[v]]))
+    )) |>
+    purrr::list_rbind()
+
+  by_candidate_count <- best |>
+    dplyr::mutate(n_bucket = cut(n, breaks = c(0, 1, 2, 3, 5, 10, 25, Inf),
+                                 labels = c("1", "2", "3", "4-5", "6-10", "11-25", "26+"))) |>
+    dplyr::group_by(n_bucket) |>
+    dplyr::summarize(n_physician_years = dplyr::n(),
+                     mean_match_prob = mean(match_prob, na.rm = TRUE),
+                     median_match_prob = stats::median(match_prob, na.rm = TRUE),
+                     .groups = "drop")
+
+  list(quantiles = quantiles, by_candidate_count = by_candidate_count)
+}
+
+
+#' Which features the forest actually uses
+#'
+#' @description `grf`'s split-based importance, labelled with the feature names the model was
+#' fitted on. Worth reading against the notes in CLAUDE.md: occupation was added as two
+#' indicators on the argument that missing and non-medical are different states, and
+#' `state_agree` was deliberately left out on the argument that `zip_dist` already carries it.
+#' Both claims are checkable here.
+#'
+#' Importance is relative and split-count based, so treat it as a ranking rather than a
+#' variance decomposition.
+#'
+#' @param rf_model fitted model from `train_rf_model()`
+#'
+#' @return a tibble of `feature`, `importance`, ordered most important first
+rf_variable_importance <- function(rf_model) {
+  vi <- as.numeric(grf::variable_importance(rf_model))
+  feat <- colnames(rf_model$X.orig)
+
+  if (is.null(feat) || length(feat) != length(vi)) {
+    feat <- paste0("feature_", seq_along(vi))
+  }
+
+  tibble::tibble(feature = feat, importance = vi) |>
+    dplyr::arrange(dplyr::desc(importance))
+}
