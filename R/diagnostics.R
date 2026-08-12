@@ -292,10 +292,28 @@ rf_variable_importance <- function(rf_model) {
 #' unambiguous anchor, a stable practice state, and a nearby anchor address. These two labels
 #' are further narrowing on top of that, not a substitute for it.
 #'
-#' @param panel path to `physician_year_panel_filled`
+#' @section Inherited quality:
 #'
-#' @return a tibble of the filled rows with `interior` and `tier1` flags
-classify_fill_confidence <- function(panel) {
+#' A fill has no `match_prob` of its own, but the rows that sourced it do. `anchor_prob_mean`
+#' is the mean `match_prob` across the physician's scored rows for the **same** `LALVOTERID`
+#' that clear `min_anchor_prob` -- the average the fill was extrapolated from. `_min` and
+#' `_max` are given too, since a mean over two anchors of 0.99 and 0.91 is a different claim
+#' from a mean over one of 0.95.
+#'
+#' **`min_anchor_prob` must match the `min_fill_prob` the run used** (both default to 0.9).
+#' Set it higher than the run did and some fills will show no anchors at all, leaving
+#' `anchor_prob_mean` as `NA`. Filtering on probability rather than taking every scored row for
+#' that voter is deliberate: a physician can hold the same voter at 0.95 in one year and 0.4 in
+#' another, and only the first was ever an anchor.
+#'
+#' Note the inherited value is an **upper bound**. It carries no penalty for the extrapolation
+#' itself, so a filled year labelled 0.97 is not as good as an observed year labelled 0.97.
+#'
+#' @param panel path to `physician_year_panel_filled`
+#' @param min_anchor_prob probability a scored row must clear to count as an anchor
+#'
+#' @return a tibble of the filled rows with `interior`, `tier1` and the anchor-quality columns
+classify_fill_confidence <- function(panel, min_anchor_prob = 0.9) {
   d <- arrow::open_dataset(panel) |>
     dplyr::select(dplyr::any_of(c("npi", "year", "LALVOTERID", "match_prob", "filled",
                                   "fill_tier"))) |>
@@ -304,23 +322,41 @@ classify_fill_confidence <- function(panel) {
 
   if (!"filled" %in% names(d)) {
     return(tibble::tibble(npi = numeric(0), year = integer(0), LALVOTERID = character(0),
-                          fill_tier = integer(0), interior = logical(0), tier1 = logical(0)))
+                          fill_tier = integer(0), interior = logical(0), tier1 = logical(0),
+                          n_anchors = integer(0), anchor_prob_mean = numeric(0),
+                          anchor_prob_min = numeric(0), anchor_prob_max = numeric(0)))
   }
 
+  scored <- dplyr::filter(d, !filled)
+
   # bracket range per (physician, voter) among SCORED rows only
-  span <- d |>
-    dplyr::filter(!filled) |>
+  span <- scored |>
     dplyr::group_by(npi, LALVOTERID) |>
     dplyr::summarize(first_year = min(year), last_year = max(year), .groups = "drop")
+
+  # the rows that actually sourced the fill: same voter, clearing the anchor cutoff
+  anchors <- scored |>
+    dplyr::filter(!is.na(match_prob), match_prob >= min_anchor_prob) |>
+    dplyr::group_by(npi, LALVOTERID) |>
+    dplyr::summarize(n_anchors = dplyr::n(),
+                     anchor_prob_mean = mean(match_prob),
+                     # guarded: dplyr evaluates these once on a zero-row group to infer output
+                     # types, and min()/max() on nothing warns and returns +/-Inf
+                     anchor_prob_min = if (dplyr::n()) min(match_prob) else NA_real_,
+                     anchor_prob_max = if (dplyr::n()) max(match_prob) else NA_real_,
+                     .groups = "drop")
 
   d |>
     dplyr::filter(filled) |>
     dplyr::left_join(span, by = dplyr::join_by(npi, LALVOTERID)) |>
+    dplyr::left_join(anchors, by = dplyr::join_by(npi, LALVOTERID)) |>
     dplyr::mutate(
       interior = !is.na(first_year) & year > first_year & year < last_year,
-      tier1 = !is.na(fill_tier) & fill_tier == 1L
+      tier1 = !is.na(fill_tier) & fill_tier == 1L,
+      n_anchors = dplyr::coalesce(n_anchors, 0L)
     ) |>
-    dplyr::select(npi, year, LALVOTERID, fill_tier, interior, tier1)
+    dplyr::select(npi, year, LALVOTERID, fill_tier, interior, tier1,
+                  n_anchors, anchor_prob_mean, anchor_prob_min, anchor_prob_max)
 }
 
 
@@ -338,10 +374,18 @@ classify_fill_confidence <- function(panel) {
 #' | `interior_or_tier1` | either of the above |
 #' | `any` | every fill |
 #'
-#' **Fills enter as a constant, not as a curve.** They have no `match_prob`, so the same set
-#' is added at every threshold — which is the point: a confident fill is a match however
-#' strictly you cut the scored ones. The visible effect is that the right-hand end of the
-#' curve stops falling as far.
+#' Two numerators are reported for each rule, because there are two defensible readings:
+#'
+#' - **`n_matched_incl_fills`** — a qualifying fill counts at *every* threshold. Fills have no
+#'   probability of their own, so the same set is added throughout. Reads as: a confident fill
+#'   is a match however strictly the scored ones are cut.
+#' - **`n_matched_incl_fills_q`** — a fill counts only where its **inherited** quality clears
+#'   the threshold. `anchor_prob_mean` from `classify_fill_confidence()` puts the fill *on* the
+#'   probability axis, so fills form a curve rather than a constant, and a fill sourced from a
+#'   0.93 anchor drops out at a 0.95 cutoff exactly as a scored 0.93 match would.
+#'
+#' The second is the more conservative and usually the more useful. A fill whose anchors did
+#' not clear `min_anchor_prob` has `anchor_prob_mean` of `NA` and never counts toward it.
 #'
 #' @section What this cannot rescue:
 #'
@@ -358,10 +402,11 @@ classify_fill_confidence <- function(panel) {
 #'
 #' @return a tibble of one row per year-threshold-`fill_rule`
 match_rate_with_fills <- function(panel, physician_data, l2_extracts,
-                                  thresholds = seq(0, 0.99, by = 0.01)) {
+                                  thresholds = seq(0, 0.99, by = 0.01),
+                                  min_anchor_prob = 0.9) {
   scored <- match_rate_by_threshold(panel, physician_data, l2_extracts,
                                     thresholds = thresholds)
-  fills <- classify_fill_confidence(panel)
+  fills <- classify_fill_confidence(panel, min_anchor_prob = min_anchor_prob)
 
   rules <- list(none = \(f) f[0, ],
                 interior = \(f) f[f$interior, ],
@@ -372,17 +417,24 @@ match_rate_with_fills <- function(panel, physician_data, l2_extracts,
   names(rules) |>
     purrr::map(\(rule) {
       kept <- rules[[rule]](fills)
-      per_year <- kept |>
+
+      flat <- kept |>
         dplyr::group_by(year) |>
         dplyr::summarize(n_fill_counted = dplyr::n_distinct(npi), .groups = "drop")
 
       scored |>
-        dplyr::left_join(per_year, by = dplyr::join_by(year)) |>
+        dplyr::left_join(flat, by = dplyr::join_by(year)) |>
         dplyr::mutate(
           fill_rule = rule,
           n_fill_counted = dplyr::coalesce(n_fill_counted, 0L),
+          # fills counted only where their INHERITED quality clears the threshold
+          n_fill_counted_q = purrr::map2_int(year, threshold, \(y, t)
+            length(unique(kept$npi[kept$year == y & !is.na(kept$anchor_prob_mean) &
+                                     kept$anchor_prob_mean >= t]))),
           n_matched_incl_fills = n_matched + n_fill_counted,
+          n_matched_incl_fills_q = n_matched + n_fill_counted_q,
           pct_matched_incl_fills = 100*n_matched_incl_fills/n_physicians,
+          pct_matched_incl_fills_q = 100*n_matched_incl_fills_q/n_physicians,
           pct_matched_incl_fills_l2 = 100*n_matched_incl_fills/n_physicians_l2
         )
     }) |>
@@ -409,22 +461,29 @@ plot_match_rate_with_fills <- function(rate_table, out_dir = "trunk/analysis") {
 
   pooled <- rate_table |>
     dplyr::group_by(fill_rule, threshold) |>
-    dplyr::summarize(pct = 100*sum(n_matched_incl_fills)/sum(n_physicians),
+    dplyr::summarize(flat = 100*sum(n_matched_incl_fills)/sum(n_physicians),
+                     inherited = 100*sum(n_matched_incl_fills_q)/sum(n_physicians),
                      .groups = "drop") |>
+    tidyr::pivot_longer(c(flat, inherited), names_to = "counting", values_to = "pct") |>
     dplyr::mutate(fill_rule = factor(fill_rule,
                                      levels = c("none", "interior", "tier1",
-                                                "interior_or_tier1", "any")))
+                                                "interior_or_tier1", "any")),
+                  counting = factor(counting, levels = c("flat", "inherited"),
+                                    labels = c("at every cutoff",
+                                               "at its inherited quality")))
 
   p <- ggplot2::ggplot(pooled, ggplot2::aes(x = threshold, y = pct,
                                             colour = fill_rule)) +
     ggplot2::geom_line(linewidth = 0.9) +
+    ggplot2::facet_wrap(~counting) +
     ggplot2::scale_y_continuous(limits = c(0, 100)) +
     ggplot2::labs(x = "Minimum accepted match probability",
                   y = "Physicians with a match (%)",
                   colour = "Fills counted",
                   title = "Match rate, counting confident gap fills as matches",
-                  subtitle = paste("Pooled across years. Fills have no probability, so each",
-                                   "rule adds a constant at every cutoff.")) +
+                  subtitle = paste("Pooled across years. Left: a qualifying fill counts",
+                                   "throughout. Right: only where the mean probability of",
+                                   "its source years clears the cutoff.")) +
     ggplot2::theme_minimal()
 
   pdf_pth <- file.path(out_dir, "match_rate_with_fills.pdf")
