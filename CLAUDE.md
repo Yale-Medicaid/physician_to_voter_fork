@@ -654,7 +654,7 @@ Two scripts. Run both from the repo root:
 
 ```bash
 Rscript tests/test_l2_and_geography.R   # 152 checks -- units
-Rscript tests/test_end_to_end.R         # 37 checks  -- integration
+Rscript tests/test_end_to_end.R         # 53 checks  -- integration
 ```
 
 `tests/test_end_to_end.R` chains every stage on the **real** output of the one before it:
@@ -957,6 +957,69 @@ kept with `NA grd_yr`, which is unchanged behaviour.
 `count_cms_npi_conflicts()` reports how much this costs and which field disagrees — a
 provider listed with two graduation years is a different data-quality story from one listed
 with two medical schools. It is a small in-memory target: `tar_read(cms_npi_conflicts)`.
+
+## Diagnostics — read-only, added without invalidating anything
+`R/diagnostics.R` and five appended targets. All of them read existing outputs, so adding
+them re-ran nothing. Verified by diffing every pre-existing target's *command* before and
+after: zero changed.
+
+| Target | What it answers |
+| --- | --- |
+| `match_rate_table` | share of physicians matched at each minimum `match_prob`, per year |
+| `match_rate_figure` | that curve as pdf + png in `trunk/analysis/` |
+| `match_quality_states` | the same per state-year, sorted worst first |
+| `match_features` | quantiles of the four continuous features, and `match_prob` by `n` bucket |
+| `rf_importance` | `grf` split-based importance, labelled from `rf_model$X.orig` |
+
+Three decisions worth keeping:
+
+- **Two denominators.** `n_physicians` is every physician-year; `n_physicians_l2` excludes
+  those whose practice state had no L2 partition. Reporting only the first makes 2024 MD/MS/NV
+  look like a matching failure rather than a data gap, so the figure uses the second.
+- **Filled rows are counted apart, not placed on the probability axis.** They carry an identity
+  and no `match_prob`; treating that as 0 understates them and as 1 overstates them. The rate
+  table reports `n_filled` per year separately.
+- **Pooled figures come from summing counts, not averaging percentages** —
+  `sum(n_matched)/sum(n_physicians_l2)`. The plot does this for its black line.
+
+`match_quality_states` is the one most likely to catch a real problem: a state whose extract
+was malformed shows up as a match rate far below its neighbours, which the national curve
+averages away.
+
+### ⚠ Deferred: changes that would force a re-run
+Recorded rather than made, because each invalidates existing targets.
+
+1. **Practice-state filter in `clean_physician_data()`.** `plocstatename` is free text — the
+   2018 extract has 674 distinct values across providers, 337 among physicians: territories
+   (PR, VI, GU, AS, MP), military APO/FPO, Canadian and Mexican provinces, spelled-out names.
+   `write_dataset(partitioning = "state")` therefore creates a partition per value, ~337 of
+   them junk that no branch reads, and those physicians also sit in the gap ledger as
+   permanently unfillable. Filtering to `valid_practice_states()` drops 12,294 physicians
+   (1.203%) and is a one-line change — but it invalidates `physician_data` and everything
+   after. **The implementation is written and stashed** (`git stash list`), with tests.
+   Note the original code never handled this either: it blocked on the raw value, so bad
+   states produced empty blocks and those physicians silently dropped out.
+2. **`cross_border_pairs` consumes the whole `lsh_pairs` aggregate**, so every one of its 408
+   branches re-runs whenever the year or state set changes. `unmatched_physicians()` already
+   filters to its own state-year, so `pattern = map(l2_extracts, lsh_pairs)` would give each
+   branch just its own slice. Needs verifying that the two patterns align branch-for-branch,
+   since `NULL` branches drop out of aggregation (405 paths from 408 branches).
+3. **`pipeline_years()` / `pipeline_states()` in `R/helpers.R` are now dead code** — the
+   `years`/`states` targets are hardcoded again, and `P2V_YEARS`/`P2V_STATES` are read by
+   nothing. Deleting them is safe (nothing depends on them) but the five tests covering them
+   should go at the same time.
+
+### Editing `years` or `states` costs less than it looks — measured
+Branch-level caching survives the edit, with one trap. Measured on a scratch pipeline:
+
+- **Existing per-branch work is reused.** Extending 2018:2019 to 2018:2020 re-ran only the two
+  new 2020 branches. Restoring a previous value re-ran nothing at all.
+- **Write `2018:2018`, not `2018`.** `2018:2025` is integer; a bare `2018` is double, so the
+  slice hashes differently and the pilot year's branches re-run. `2018:2018` re-runs zero.
+- **Anything consuming an upstream *aggregate* re-runs in full** regardless — that is item 2
+  above. In the test, the aggregate-consuming target re-ran all its branches on every edit.
+- `tar_outdated()` cannot show any of this: it reports the pattern name and never expands
+  branches, so it looked identical in every case. Count actual executions instead.
 
 ## R style conventions
 - Use tidyverse packages where possible.
