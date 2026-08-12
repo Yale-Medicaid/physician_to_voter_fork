@@ -289,7 +289,7 @@ ok("occupation indicators appear among the features",
 ok("state_agree is NOT a feature", !("state_agree" %in% vi$feature))
 
 cat("\n== match rate counting confident fills ==\n")
-fc <- classify_fill_confidence(diag_panel)
+fc <- classify_fill_confidence(diag_panel, min_anchor_prob = 0.5)
 ok("fill confidence table covers exactly the filled rows",
    nrow(fc) == sum(open_dataset(diag_panel) |> collect() |> pull(filled)))
 ok("interior and tier1 are logical, never NA",
@@ -302,8 +302,40 @@ ok("a fill with no scored row for the same voter is not interior",
      nrow(lone) == 0 || all(!lone$interior)
    })
 
+ok("anchor quality is inherited from the source years",
+   all(c("n_anchors", "anchor_prob_mean", "anchor_prob_min", "anchor_prob_max") %in% names(fc)))
+ok("a fill with anchors carries a mean within its own min/max",
+   {
+     a <- fc[fc$n_anchors > 0, ]
+     nrow(a) == 0 || all(a$anchor_prob_mean >= a$anchor_prob_min - 1e-9 &
+                           a$anchor_prob_mean <= a$anchor_prob_max + 1e-9)
+   })
+ok("inherited quality clears the anchor cutoff it was filtered on",
+   {
+     a <- fc[fc$n_anchors > 0, ]
+     nrow(a) == 0 || all(a$anchor_prob_min >= 0.5 - 1e-9)
+   })
+ok("raising min_anchor_prob above every anchor leaves no inherited quality",
+   all(is.na(classify_fill_confidence(diag_panel, min_anchor_prob = 1.01)$anchor_prob_mean)))
+
 rf2 <- match_rate_with_fills(diag_panel, phys_pths, l2_paths,
-                             thresholds = seq(0, 0.9, by = 0.1))
+                             thresholds = seq(0, 0.9, by = 0.1), min_anchor_prob = 0.5)
+ok("the quality-gated numerator is never above the flat one",
+   all(rf2$n_matched_incl_fills_q <= rf2$n_matched_incl_fills))
+ok("the quality-gated numerator is never below scored-only",
+   all(rf2$n_matched_incl_fills_q >= rf2$n_matched))
+ok("quality-gated fill counts are non-increasing in the threshold",
+   all(unlist(lapply(split(rf2, list(rf2$year, rf2$fill_rule), drop = TRUE), \(d) {
+     d <- d[order(d$threshold), ]
+     all(diff(d$n_fill_counted_q) <= 0)
+   }))))
+# they agree only when min_anchor_prob matches the min_fill_prob the fill used -- the
+# fixture fills at 0.5, so both calls above are told 0.5
+ok("at threshold 0 both readings agree when the cutoffs match",
+   {
+     z <- rf2[rf2$threshold == 0, ]
+     all(z$n_matched_incl_fills_q == z$n_matched_incl_fills)
+   })
 ok("every fill rule is represented",
    setequal(rf2$fill_rule, c("none", "interior", "tier1", "interior_or_tier1", "any")))
 ok("rule 'none' reproduces the scored-only counts",
