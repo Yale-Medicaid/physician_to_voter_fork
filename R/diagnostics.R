@@ -272,3 +272,165 @@ rf_variable_importance <- function(rf_model) {
   tibble::tibble(feature = feat, importance = vi) |>
     dplyr::arrange(dplyr::desc(importance))
 }
+
+
+#' Label each filled physician-year by how well anchored it is
+#'
+#' @description "Confident" needs a definition, and two are available without assuming
+#' anything about the run's settings:
+#'
+#' - **`interior`** — the physician has a *scored* row for the **same** `LALVOTERID` both
+#'   before and after the gap year, so the identity is bracketed rather than extrapolated off
+#'   the end of the panel. Uses the fill's own voter id, so no probability threshold has to be
+#'   guessed at.
+#' - **`fill_tier == 1`** — no L2 partition existed that year, so the physician could not
+#'   have matched. Absence carries no information about them, which is why this is the stronger
+#'   tier. Tier 2 means L2 existed and they were not found, which is ambiguous evidence
+#'   *against*.
+#'
+#' Every filled row already cleared the four gates in `classify_panel_gaps()` — a strong
+#' unambiguous anchor, a stable practice state, and a nearby anchor address. These two labels
+#' are further narrowing on top of that, not a substitute for it.
+#'
+#' @param panel path to `physician_year_panel_filled`
+#'
+#' @return a tibble of the filled rows with `interior` and `tier1` flags
+classify_fill_confidence <- function(panel) {
+  d <- arrow::open_dataset(panel) |>
+    dplyr::select(dplyr::any_of(c("npi", "year", "LALVOTERID", "match_prob", "filled",
+                                  "fill_tier"))) |>
+    dplyr::collect() |>
+    dplyr::mutate(year = as.integer(year))
+
+  if (!"filled" %in% names(d)) {
+    return(tibble::tibble(npi = numeric(0), year = integer(0), LALVOTERID = character(0),
+                          fill_tier = integer(0), interior = logical(0), tier1 = logical(0)))
+  }
+
+  # bracket range per (physician, voter) among SCORED rows only
+  span <- d |>
+    dplyr::filter(!filled) |>
+    dplyr::group_by(npi, LALVOTERID) |>
+    dplyr::summarize(first_year = min(year), last_year = max(year), .groups = "drop")
+
+  d |>
+    dplyr::filter(filled) |>
+    dplyr::left_join(span, by = dplyr::join_by(npi, LALVOTERID)) |>
+    dplyr::mutate(
+      interior = !is.na(first_year) & year > first_year & year < last_year,
+      tier1 = !is.na(fill_tier) & fill_tier == 1L
+    ) |>
+    dplyr::select(npi, year, LALVOTERID, fill_tier, interior, tier1)
+}
+
+
+#' Match rate counting confident fills as matches
+#'
+#' @description The companion to `match_rate_by_threshold()`, which excludes fills entirely.
+#' Here a fill counts toward the numerator, under each of several definitions of "confident",
+#' so the definitions can be compared rather than chosen blind.
+#'
+#' | `fill_rule` | Counts as a match |
+#' | --- | --- |
+#' | `none` | scored matches only — identical to `match_rate_by_threshold()` |
+#' | `interior` | fills bracketed by the same voter on both sides |
+#' | `tier1` | fills where no L2 partition existed that year |
+#' | `interior_or_tier1` | either of the above |
+#' | `any` | every fill |
+#'
+#' **Fills enter as a constant, not as a curve.** They have no `match_prob`, so the same set
+#' is added at every threshold — which is the point: a confident fill is a match however
+#' strictly you cut the scored ones. The visible effect is that the right-hand end of the
+#' curve stops falling as far.
+#'
+#' @section What this cannot rescue:
+#'
+#' A fill exists only where the physician-year was **absent from the panel entirely**. A
+#' physician-year with one weak candidate — say `match_prob` of 0.02 — is not a gap, so it was
+#' never a fill candidate. At a cutoff of 0.9 it therefore counts as neither matched nor
+#' filled.
+#'
+#' Making fills rescue those too would mean re-deriving the gap universe at every threshold,
+#' which is a change to `fill_panel_gaps()` rather than to a diagnostic. Recorded in CLAUDE.md
+#' as a deferred idea.
+#'
+#' @inheritParams match_rate_by_threshold
+#'
+#' @return a tibble of one row per year-threshold-`fill_rule`
+match_rate_with_fills <- function(panel, physician_data, l2_extracts,
+                                  thresholds = seq(0, 0.99, by = 0.01)) {
+  scored <- match_rate_by_threshold(panel, physician_data, l2_extracts,
+                                    thresholds = thresholds)
+  fills <- classify_fill_confidence(panel)
+
+  rules <- list(none = \(f) f[0, ],
+                interior = \(f) f[f$interior, ],
+                tier1 = \(f) f[f$tier1, ],
+                interior_or_tier1 = \(f) f[f$interior | f$tier1, ],
+                any = \(f) f)
+
+  names(rules) |>
+    purrr::map(\(rule) {
+      kept <- rules[[rule]](fills)
+      per_year <- kept |>
+        dplyr::group_by(year) |>
+        dplyr::summarize(n_fill_counted = dplyr::n_distinct(npi), .groups = "drop")
+
+      scored |>
+        dplyr::left_join(per_year, by = dplyr::join_by(year)) |>
+        dplyr::mutate(
+          fill_rule = rule,
+          n_fill_counted = dplyr::coalesce(n_fill_counted, 0L),
+          n_matched_incl_fills = n_matched + n_fill_counted,
+          pct_matched_incl_fills = 100*n_matched_incl_fills/n_physicians,
+          pct_matched_incl_fills_l2 = 100*n_matched_incl_fills/n_physicians_l2
+        )
+    }) |>
+    purrr::list_rbind()
+}
+
+
+#' Plot the match-rate curve with and without confident fills
+#'
+#' @description Pooled across years, one line per `fill_rule`, so the gain from counting fills
+#' is legible as the gap between lines rather than having to be inferred across two figures.
+#'
+#' Uses the full `n_physicians` denominator here rather than the L2-available one, because
+#' Tier 1 fills exist precisely where L2 was missing — dividing them by a denominator that has
+#' already removed those physician-years would double-count the correction and can push the
+#' rate above 100%.
+#'
+#' @param rate_table tibble from `match_rate_with_fills()`
+#' @param out_dir directory to write into
+#'
+#' @return the paths written
+plot_match_rate_with_fills <- function(rate_table, out_dir = "trunk/analysis") {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  pooled <- rate_table |>
+    dplyr::group_by(fill_rule, threshold) |>
+    dplyr::summarize(pct = 100*sum(n_matched_incl_fills)/sum(n_physicians),
+                     .groups = "drop") |>
+    dplyr::mutate(fill_rule = factor(fill_rule,
+                                     levels = c("none", "interior", "tier1",
+                                                "interior_or_tier1", "any")))
+
+  p <- ggplot2::ggplot(pooled, ggplot2::aes(x = threshold, y = pct,
+                                            colour = fill_rule)) +
+    ggplot2::geom_line(linewidth = 0.9) +
+    ggplot2::scale_y_continuous(limits = c(0, 100)) +
+    ggplot2::labs(x = "Minimum accepted match probability",
+                  y = "Physicians with a match (%)",
+                  colour = "Fills counted",
+                  title = "Match rate, counting confident gap fills as matches",
+                  subtitle = paste("Pooled across years. Fills have no probability, so each",
+                                   "rule adds a constant at every cutoff.")) +
+    ggplot2::theme_minimal()
+
+  pdf_pth <- file.path(out_dir, "match_rate_with_fills.pdf")
+  png_pth <- file.path(out_dir, "match_rate_with_fills.png")
+  ggplot2::ggsave(pdf_pth, p, width = 7, height = 4.5)
+  ggplot2::ggsave(png_pth, p, width = 7, height = 4.5, dpi = 150)
+
+  c(pdf_pth, png_pth)
+}
