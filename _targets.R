@@ -153,4 +153,13 @@ list(
   , targets::tar_target(rf_importance,
                         rf_variable_importance(rf_model),
                         packages = "grf")
+
+  # The same curve, but a confidently filled year counts as a match. Several definitions of
+  # "confident" side by side, so they can be compared rather than picked blind.
+  , targets::tar_target(match_rate_table_with_fills,
+                        match_rate_with_fills(physician_year_panel_filled,
+                                              physician_data, l2_extracts))
+  , targets::tar_target(match_rate_figure_with_fills,
+                        plot_match_rate_with_fills(match_rate_table_with_fills),
+                        format = "file")
 )
