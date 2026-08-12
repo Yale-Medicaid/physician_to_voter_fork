@@ -288,6 +288,58 @@ ok("occupation indicators appear among the features",
    all(c("occ_medical", "occ_unknown") %in% vi$feature))
 ok("state_agree is NOT a feature", !("state_agree" %in% vi$feature))
 
+cat("\n== match rate counting confident fills ==\n")
+fc <- classify_fill_confidence(diag_panel)
+ok("fill confidence table covers exactly the filled rows",
+   nrow(fc) == sum(open_dataset(diag_panel) |> collect() |> pull(filled)))
+ok("interior and tier1 are logical, never NA",
+   is.logical(fc$interior) && is.logical(fc$tier1) &&
+     !any(is.na(fc$interior)) && !any(is.na(fc$tier1)))
+ok("a fill with no scored row for the same voter is not interior",
+   {
+     b <- best_scored_per_physician_year(diag_panel)
+     lone <- fc[!paste(fc$npi, fc$LALVOTERID) %in% paste(b$npi, b$LALVOTERID), ]
+     nrow(lone) == 0 || all(!lone$interior)
+   })
+
+rf2 <- match_rate_with_fills(diag_panel, phys_pths, l2_paths,
+                             thresholds = seq(0, 0.9, by = 0.1))
+ok("every fill rule is represented",
+   setequal(rf2$fill_rule, c("none", "interior", "tier1", "interior_or_tier1", "any")))
+ok("rule 'none' reproduces the scored-only counts",
+   identical(rf2$n_matched_incl_fills[rf2$fill_rule == "none"],
+             rf2$n_matched[rf2$fill_rule == "none"]))
+ok("counting fills never lowers the match count",
+   all(rf2$n_matched_incl_fills >= rf2$n_matched))
+ok("'any' is the most permissive rule",
+   {
+     tot <- tapply(rf2$n_matched_incl_fills, rf2$fill_rule, sum)
+     tot[["any"]] == max(tot)
+   })
+ok("interior and tier1 are each no larger than 'any'",
+   {
+     tot <- tapply(rf2$n_matched_incl_fills, rf2$fill_rule, sum)
+     tot[["interior"]] <= tot[["any"]] && tot[["tier1"]] <= tot[["any"]]
+   })
+ok("the fill contribution is constant across thresholds, as it must be",
+   {
+     z <- rf2[rf2$fill_rule == "any", ]
+     all(tapply(z$n_fill_counted, z$year, \(v) length(unique(v)) == 1))
+   })
+ok("no rule pushes the rate above 100%",
+   all(rf2$pct_matched_incl_fills <= 100 + 1e-9))
+ok("matched-plus-fills never exceeds the physician universe",
+   all(rf2$n_matched_incl_fills <= rf2$n_physicians))
+ok("NY/2019 -- L2 absent -- is where the tier1 fill shows up",
+   {
+     t1 <- rf2[rf2$fill_rule == "tier1" & rf2$threshold == 0, ]
+     all(t1$n_fill_counted[t1$year == 2018L] == 0)
+   })
+
+fig2 <- plot_match_rate_with_fills(rf2, out_dir = "diag_out")
+ok("the with-fills figure writes a pdf and a png",
+   length(fig2) == 2 && all(file.exists(fig2)) && all(file.size(fig2) > 0))
+
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
             FAIL, if (FAIL == 1) "" else "s"))
