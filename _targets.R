@@ -162,4 +162,8 @@ list(
   , targets::tar_target(match_rate_figure_with_fills,
                         plot_match_rate_with_fills(match_rate_table_with_fills),
                         format = "file")
+  # the filled rows themselves, with the anchor quality each inherited -- read this to see
+  # how many source years a fill rests on, not just its average
+  , targets::tar_target(fill_confidence,
+                        classify_fill_confidence(physician_year_panel_filled))
 )
