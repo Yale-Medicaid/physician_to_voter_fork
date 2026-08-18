@@ -166,4 +166,14 @@ list(
   # how many source years a fill rests on, not just its average
   , targets::tar_target(fill_confidence,
                         classify_fill_confidence(physician_year_panel_filled))
+
+  # ---------------------------------------------------------------------- export
+  # Voter attributes for the downstream project, joined back from L2 itself rather than from
+  # whatever the matching stages carried. To add an attribute, edit l2_export_columns() --
+  # nothing else depends on it. Partitioned by the VOTER's state-year.
+  , targets::tar_target(voter_attribute_export,
+                        export_voter_attributes(physician_year_panel_filled, l2_extracts),
+                        pattern = map(l2_extracts),
+                        format = "file",
+                        resources = on_max)
 )

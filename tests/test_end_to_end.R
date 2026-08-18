@@ -372,6 +372,43 @@ fig2 <- plot_match_rate_with_fills(rf2, out_dir = "diag_out")
 ok("the with-fills figure writes a pdf and a png",
    length(fig2) == 2 && all(file.exists(fig2)) && all(file.size(fig2) > 0))
 
+cat("\n== voter attribute export ==\n")
+ok("party lookup covers 50 states plus DC",
+   nrow(l2_party_source()) == 51 && "DC" %in% l2_party_source()$state)
+ok("every state falls in exactly one party regime",
+   !any(duplicated(l2_party_source()$state)) &&
+     setequal(unique(l2_party_source()$party_source),
+              c("registered", "primary_ballot", "modeled")))
+ok("l2_export_columns includes everything the downstream project asked for",
+   all(c("Voters_Gender", "Parties_Description", "Ethnic_Description",
+         "CountyEthnic_Description", "Residence_Addresses_AddressLine",
+         "Residence_Addresses_Zip") %in% l2_export_columns()))
+
+exp_pths <- purrr::map(leaves_present, \(lf)
+  export_voter_attributes(diag_panel, lf, out_pth = "vexport/{ys}")) |> purrr::compact()
+ok("export produced output", length(exp_pths) > 0)
+ex <- open_dataset(unique(dirname(dirname(unlist(exp_pths))))) |> collect()
+
+ok("one row per physician-year", nrow(ex) == nrow(distinct(ex, npi, year)))
+ok("carries the requested identifiers and flags",
+   all(c("npi", "LALVOTERID", "year", "match_prob", "filled") %in% names(ex)))
+ok("carries sex, party and address",
+   all(c("Voters_Gender", "Parties_Description", "Residence_Addresses_City",
+         "Residence_Addresses_Zip") %in% names(ex)))
+ok("a column absent from this L2 vintage comes back as NA, not an error",
+   "Residence_Addresses_AddressLine" %in% names(ex) &&
+     all(is.na(ex$Residence_Addresses_AddressLine)))
+ok("race_source is one of the two documented values",
+   all(ex$race_source %in% c("voter_file", "modeled")))
+ok("party_source is attached from the voter's state",
+   all(ex$party_source[ex$Residence_Addresses_State == "CT"] == "registered"))
+ok("every exported voter id appears in the panel",
+   all(ex$LALVOTERID %in% (open_dataset(diag_panel) |> collect() |> pull(LALVOTERID))))
+ok("branches do not double-count a physician-year across states",
+   nrow(ex) == nrow(distinct(ex, npi, year)))
+ok("scored rows keep their probability, filled rows do not",
+   all(!is.na(ex$match_prob[!ex$filled])) && all(is.na(ex$match_prob[ex$filled])))
+
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
             FAIL, if (FAIL == 1) "" else "s"))
