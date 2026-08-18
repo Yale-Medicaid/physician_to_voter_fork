@@ -4,11 +4,11 @@
 #SBATCH --mail-type=all
 #SBATCH --partition=scavenge
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=20GB
+#SBATCH --cpus-per-task=40
+#SBATCH --mem=400GB
 #SBATCH --output=job_outputs/out.txt
 #SBATCH -e job_outputs/err.txt
 
 module add R/4.4.1-foss-2022b
 
-R -e "targets::tar_make()"
+R -e "targets::tar_make(voter_attribute_export)"
