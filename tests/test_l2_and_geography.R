@@ -9,11 +9,11 @@
 suppressPackageStartupMessages({
   library(arrow); library(tidyverse); library(zoomerjoin); library(lubridate)
 })
-# source before the setwd() below -- these paths are relative to the repo root
-source("R/helpers.R"); source("R/l2.R"); source("R/geographic.R")
-source("R/clean_physician_data.R"); source("R/locality_sensitive_hash.R")
-source("R/random_forest.R"); source("R/reconcile.R"); source("R/nppes.R")
-source("R/gap_fill.R"); source("R/reference_data.R")
+# Load the whole directory rather than listing files: an explicit list silently falls behind
+# when a new R/ file lands, and the namespacing guard below then cannot see it. It has already
+# happened twice (reference_data.R, diagnostics.R). Sourced before the setwd() below, because
+# the path is relative to the repo root.
+targets::tar_source(files = "R")
 
 FAIL <- 0L
 ok <- function(label, cond) {

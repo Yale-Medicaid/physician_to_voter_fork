@@ -135,4 +135,35 @@ list(
   , targets::tar_target(panel_gap_summary,
                         summarize_panel_gaps(physician_year_panel_data, physician_data,
                                              l2_extracts))
+
+  # ----------------------------------------------------------------- diagnostics
+  # All read-only over existing outputs, so adding them invalidates nothing above.
+  # Small tibbles stay in memory; only the figure is a file.
+  , targets::tar_target(match_rate_table,
+                        match_rate_by_threshold(physician_year_panel_filled,
+                                                physician_data, l2_extracts))
+  , targets::tar_target(match_rate_figure,
+                        plot_match_rate_curve(match_rate_table),
+                        format = "file")
+  , targets::tar_target(match_quality_states,
+                        match_quality_by_state_year(physician_year_panel_filled,
+                                                    physician_data))
+  , targets::tar_target(match_features,
+                        match_feature_summary(physician_year_panel_filled))
+  , targets::tar_target(rf_importance,
+                        rf_variable_importance(rf_model),
+                        packages = "grf")
+
+  # The same curve, but a confidently filled year counts as a match. Several definitions of
+  # "confident" side by side, so they can be compared rather than picked blind.
+  , targets::tar_target(match_rate_table_with_fills,
+                        match_rate_with_fills(physician_year_panel_filled,
+                                              physician_data, l2_extracts))
+  , targets::tar_target(match_rate_figure_with_fills,
+                        plot_match_rate_with_fills(match_rate_table_with_fills),
+                        format = "file")
+  # the filled rows themselves, with the anchor quality each inherited -- read this to see
+  # how many source years a fill rests on, not just its average
+  , targets::tar_target(fill_confidence,
+                        classify_fill_confidence(physician_year_panel_filled))
 )

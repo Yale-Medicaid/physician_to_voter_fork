@@ -234,6 +234,144 @@ ok("tiers sum to the gap count",
    summary_tbl$n_tier_1 + summary_tbl$n_tier_2 + summary_tbl$n_tier_3 ==
      summary_tbl$n_gaps)
 
+## ------------------------------------------------------------- diagnostics
+## Fed the real filled panel this file just built, so the handoff is covered too.
+cat("\n== diagnostics, fed the real panel ==\n")
+diag_panel <- if (!is.null(filled)) filled else panel
+
+rt <- match_rate_by_threshold(diag_panel, phys_pths, l2_paths,
+                              thresholds = seq(0, 0.9, by = 0.1))
+ok("match rate table has a row per year-threshold",
+   nrow(rt) == length(unique(rt$year)) * 10)
+ok("percentages are bounded",
+   all(rt$pct_matched >= 0 & rt$pct_matched <= 100, na.rm = TRUE) &&
+     all(rt$pct_matched_l2 >= 0 & rt$pct_matched_l2 <= 100, na.rm = TRUE))
+ok("match count is non-increasing in the threshold",
+   all(unlist(lapply(split(rt, rt$year), \(d) {
+     d <- d[order(d$threshold), ]
+     all(diff(d$n_matched) <= 0)
+   }))))
+ok("at threshold 0 every scored physician-year counts",
+   {
+     b <- best_scored_per_physician_year(diag_panel)
+     z <- rt[rt$threshold == 0, ]
+     all(purrr::map2_lgl(z$year, z$n_matched,
+                         \(y, k) k == sum(b$year == y & !is.na(b$match_prob))))
+   })
+ok("the L2-available denominator is never larger than the full one",
+   all(rt$n_physicians_l2 <= rt$n_physicians))
+ok("2019 has a smaller L2 denominator than 2018 -- NY/2019 is absent",
+   rt$n_physicians_l2[rt$year == 2019L][1] < rt$n_physicians[rt$year == 2019L][1])
+
+fig <- plot_match_rate_curve(rt, out_dir = "diag_out")
+ok("the figure writes a pdf and a png",
+   length(fig) == 2 && all(file.exists(fig)) && all(file.size(fig) > 0))
+
+st <- match_quality_by_state_year(diag_panel, phys_pths, min_prob = 0.5)
+ok("state-year table covers every state-year in physician_data",
+   nrow(st) == nrow(distinct(phys_all, state, year)))
+ok("no state-year reports more matches than physicians",
+   all(st$n_matched <= st$n_physicians))
+
+fs <- match_feature_summary(diag_panel)
+ok("feature summary returns quantiles and candidate-count buckets",
+   is.list(fs) && setequal(names(fs), c("quantiles", "by_candidate_count")))
+ok("quantiles cover all four features",
+   setequal(fs$quantiles$variable,
+            c("match_prob", "zip_dist", "full_name_sim", "n")))
+
+vi <- rf_variable_importance(model)
+ok("importance has one row per RF feature", nrow(vi) == 8)
+ok("features are named, not feature_1..n", !any(grepl("^feature_[0-9]+$", vi$feature)))
+ok("importance is sorted descending", !is.unsorted(rev(vi$importance)))
+ok("occupation indicators appear among the features",
+   all(c("occ_medical", "occ_unknown") %in% vi$feature))
+ok("state_agree is NOT a feature", !("state_agree" %in% vi$feature))
+
+cat("\n== match rate counting confident fills ==\n")
+fc <- classify_fill_confidence(diag_panel, min_anchor_prob = 0.5)
+ok("fill confidence table covers exactly the filled rows",
+   nrow(fc) == sum(open_dataset(diag_panel) |> collect() |> pull(filled)))
+ok("interior and tier1 are logical, never NA",
+   is.logical(fc$interior) && is.logical(fc$tier1) &&
+     !any(is.na(fc$interior)) && !any(is.na(fc$tier1)))
+ok("a fill with no scored row for the same voter is not interior",
+   {
+     b <- best_scored_per_physician_year(diag_panel)
+     lone <- fc[!paste(fc$npi, fc$LALVOTERID) %in% paste(b$npi, b$LALVOTERID), ]
+     nrow(lone) == 0 || all(!lone$interior)
+   })
+
+ok("anchor quality is inherited from the source years",
+   all(c("n_anchors", "anchor_prob_mean", "anchor_prob_min", "anchor_prob_max") %in% names(fc)))
+ok("a fill with anchors carries a mean within its own min/max",
+   {
+     a <- fc[fc$n_anchors > 0, ]
+     nrow(a) == 0 || all(a$anchor_prob_mean >= a$anchor_prob_min - 1e-9 &
+                           a$anchor_prob_mean <= a$anchor_prob_max + 1e-9)
+   })
+ok("inherited quality clears the anchor cutoff it was filtered on",
+   {
+     a <- fc[fc$n_anchors > 0, ]
+     nrow(a) == 0 || all(a$anchor_prob_min >= 0.5 - 1e-9)
+   })
+ok("raising min_anchor_prob above every anchor leaves no inherited quality",
+   all(is.na(classify_fill_confidence(diag_panel, min_anchor_prob = 1.01)$anchor_prob_mean)))
+
+rf2 <- match_rate_with_fills(diag_panel, phys_pths, l2_paths,
+                             thresholds = seq(0, 0.9, by = 0.1), min_anchor_prob = 0.5)
+ok("the quality-gated numerator is never above the flat one",
+   all(rf2$n_matched_incl_fills_q <= rf2$n_matched_incl_fills))
+ok("the quality-gated numerator is never below scored-only",
+   all(rf2$n_matched_incl_fills_q >= rf2$n_matched))
+ok("quality-gated fill counts are non-increasing in the threshold",
+   all(unlist(lapply(split(rf2, list(rf2$year, rf2$fill_rule), drop = TRUE), \(d) {
+     d <- d[order(d$threshold), ]
+     all(diff(d$n_fill_counted_q) <= 0)
+   }))))
+# they agree only when min_anchor_prob matches the min_fill_prob the fill used -- the
+# fixture fills at 0.5, so both calls above are told 0.5
+ok("at threshold 0 both readings agree when the cutoffs match",
+   {
+     z <- rf2[rf2$threshold == 0, ]
+     all(z$n_matched_incl_fills_q == z$n_matched_incl_fills)
+   })
+ok("every fill rule is represented",
+   setequal(rf2$fill_rule, c("none", "interior", "tier1", "interior_or_tier1", "any")))
+ok("rule 'none' reproduces the scored-only counts",
+   identical(rf2$n_matched_incl_fills[rf2$fill_rule == "none"],
+             rf2$n_matched[rf2$fill_rule == "none"]))
+ok("counting fills never lowers the match count",
+   all(rf2$n_matched_incl_fills >= rf2$n_matched))
+ok("'any' is the most permissive rule",
+   {
+     tot <- tapply(rf2$n_matched_incl_fills, rf2$fill_rule, sum)
+     tot[["any"]] == max(tot)
+   })
+ok("interior and tier1 are each no larger than 'any'",
+   {
+     tot <- tapply(rf2$n_matched_incl_fills, rf2$fill_rule, sum)
+     tot[["interior"]] <= tot[["any"]] && tot[["tier1"]] <= tot[["any"]]
+   })
+ok("the fill contribution is constant across thresholds, as it must be",
+   {
+     z <- rf2[rf2$fill_rule == "any", ]
+     all(tapply(z$n_fill_counted, z$year, \(v) length(unique(v)) == 1))
+   })
+ok("no rule pushes the rate above 100%",
+   all(rf2$pct_matched_incl_fills <= 100 + 1e-9))
+ok("matched-plus-fills never exceeds the physician universe",
+   all(rf2$n_matched_incl_fills <= rf2$n_physicians))
+ok("NY/2019 -- L2 absent -- is where the tier1 fill shows up",
+   {
+     t1 <- rf2[rf2$fill_rule == "tier1" & rf2$threshold == 0, ]
+     all(t1$n_fill_counted[t1$year == 2018L] == 0)
+   })
+
+fig2 <- plot_match_rate_with_fills(rf2, out_dir = "diag_out")
+ok("the with-fills figure writes a pdf and a png",
+   length(fig2) == 2 && all(file.exists(fig2)) && all(file.size(fig2) > 0))
+
 cat(sprintf("\n%s  (%d failure%s)\n",
             if (FAIL == 0) "ALL CHECKS PASSED" else "FAILURES PRESENT",
             FAIL, if (FAIL == 1) "" else "s"))

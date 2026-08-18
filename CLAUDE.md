@@ -654,7 +654,7 @@ Two scripts. Run both from the repo root:
 
 ```bash
 Rscript tests/test_l2_and_geography.R   # 152 checks -- units
-Rscript tests/test_end_to_end.R         # 37 checks  -- integration
+Rscript tests/test_end_to_end.R         # 74 checks  -- integration
 ```
 
 `tests/test_end_to_end.R` chains every stage on the **real** output of the one before it:
@@ -957,6 +957,126 @@ kept with `NA grd_yr`, which is unchanged behaviour.
 `count_cms_npi_conflicts()` reports how much this costs and which field disagrees — a
 provider listed with two graduation years is a different data-quality story from one listed
 with two medical schools. It is a small in-memory target: `tar_read(cms_npi_conflicts)`.
+
+## Diagnostics — read-only, added without invalidating anything
+`R/diagnostics.R` and five appended targets. All of them read existing outputs, so adding
+them re-ran nothing. Verified by diffing every pre-existing target's *command* before and
+after: zero changed.
+
+| Target | What it answers |
+| --- | --- |
+| `match_rate_table` | share of physicians matched at each minimum `match_prob`, per year |
+| `match_rate_figure` | that curve as pdf + png in `trunk/analysis/` |
+| `match_quality_states` | the same per state-year, sorted worst first |
+| `match_features` | quantiles of the four continuous features, and `match_prob` by `n` bucket |
+| `rf_importance` | `grf` split-based importance, labelled from `rf_model$X.orig` |
+
+Three decisions worth keeping:
+
+- **Two denominators.** `n_physicians` is every physician-year; `n_physicians_l2` excludes
+  those whose practice state had no L2 partition. Reporting only the first makes 2024 MD/MS/NV
+  look like a matching failure rather than a data gap, so the figure uses the second.
+- **Filled rows are counted apart, not placed on the probability axis.** They carry an identity
+  and no `match_prob`; treating that as 0 understates them and as 1 overstates them. The rate
+  table reports `n_filled` per year separately.
+- **Pooled figures come from summing counts, not averaging percentages** —
+  `sum(n_matched)/sum(n_physicians_l2)`. The plot does this for its black line.
+
+`match_quality_states` is the one most likely to catch a real problem: a state whose extract
+was malformed shows up as a match rate far below its neighbours, which the national curve
+averages away.
+
+### Counting confident fills as matches
+`match_rate_table_with_fills` / `match_rate_figure_with_fills` repeat the curve with a
+confidently filled year counted as a match. Five rules in one long table so they can be
+compared rather than chosen blind: `none`, `interior`, `tier1`, `interior_or_tier1`, `any`.
+
+**`interior` means the physician has a scored row for the *same* `LALVOTERID` both before and
+after the gap year** — the identity is bracketed, not extrapolated off the end of the panel.
+Defined from the fill's own voter id rather than from a probability cutoff, so it needs no
+assumption about which `min_fill_prob` the run used.
+
+**Two readings, both in the table.** `n_matched_incl_fills` counts a qualifying fill at every
+cutoff — fills have no probability, so the same set enters throughout. `n_matched_incl_fills_q`
+counts a fill only where its **inherited** quality clears the cutoff, putting it on the
+probability axis so that a fill sourced from a 0.93 anchor drops out at 0.95 exactly as a
+scored 0.93 match would. The second is the conservative reading and usually the more useful;
+the figure facets both.
+
+**Inherited quality comes from the anchors, not from the fill.** `classify_fill_confidence()`
+reports `n_anchors` and the mean/min/max `match_prob` of the physician's scored rows for the
+*same* `LALVOTERID` clearing `min_anchor_prob`. `fill_confidence` exposes this per fill, so one
+resting on a single source year can be told from one resting on four.
+
+Three things about it worth keeping:
+
+- **`min_anchor_prob` must match the run's `min_fill_prob`** (both default 0.9). Set it higher
+  and some fills show no anchors, leaving `anchor_prob_mean` as `NA` — which then never counts
+  toward the quality-gated numerator. The integration test exercises exactly this: its fixture
+  fills at 0.5, so the diagnostics are told 0.5, and a separate check confirms that raising the
+  cutoff above every anchor yields all-`NA`.
+- **Filtering the anchors on probability is deliberate**, rather than averaging every scored row
+  for that voter. A physician can hold the same voter at 0.95 one year and 0.4 another, and only
+  the first was ever an anchor; averaging both would misreport the fill's provenance.
+- **The inherited value is an upper bound.** It carries no penalty for the extrapolation itself,
+  so a filled year labelled 0.97 is not as trustworthy as an observed year labelled 0.97.
+
+`min()`/`max()` inside that `summarize()` are guarded with `if (dplyr::n())`, because dplyr
+evaluates the expressions once on a zero-row group to infer output types and both warn and
+return `±Inf` on nothing.
+
+**No double counting.** `classify_panel_gaps()` builds the gap universe by anti-joining the
+panel, so a filled row never coexists with a scored row for the same physician-year.
+
+**The with-fills figure uses the full `n_physicians` denominator**, not `n_physicians_l2`.
+Tier 1 fills exist precisely where L2 was missing, so dividing them by a denominator that has
+already removed those physician-years double-counts the correction and can exceed 100%.
+
+#### ⚠ What counting fills cannot rescue
+A fill exists only where the physician-year was **absent from the panel entirely**. A
+physician-year holding one weak candidate — `match_prob` of 0.02, say — is not a gap, so it was
+never a fill candidate. At a cutoff of 0.9 it counts as neither matched nor filled.
+
+Making fills rescue those would mean re-deriving the gap universe at each threshold, i.e.
+changing `fill_panel_gaps()` to take a cutoff. That is a fourth deferred item: it invalidates
+`physician_year_panel_filled` and `panel_gap_summary`. It would also raise a question the
+current design sidesteps — whether a physician with a weak scored match should be allowed a
+*different* voter by fill, which the `unambiguous` gate currently forbids.
+
+### ⚠ Deferred: changes that would force a re-run
+Recorded rather than made, because each invalidates existing targets.
+
+1. **Practice-state filter in `clean_physician_data()`.** `plocstatename` is free text — the
+   2018 extract has 674 distinct values across providers, 337 among physicians: territories
+   (PR, VI, GU, AS, MP), military APO/FPO, Canadian and Mexican provinces, spelled-out names.
+   `write_dataset(partitioning = "state")` therefore creates a partition per value, ~337 of
+   them junk that no branch reads, and those physicians also sit in the gap ledger as
+   permanently unfillable. Filtering to `valid_practice_states()` drops 12,294 physicians
+   (1.203%) and is a one-line change — but it invalidates `physician_data` and everything
+   after. **The implementation is written and stashed** (`git stash list`), with tests.
+   Note the original code never handled this either: it blocked on the raw value, so bad
+   states produced empty blocks and those physicians silently dropped out.
+2. **`cross_border_pairs` consumes the whole `lsh_pairs` aggregate**, so every one of its 408
+   branches re-runs whenever the year or state set changes. `unmatched_physicians()` already
+   filters to its own state-year, so `pattern = map(l2_extracts, lsh_pairs)` would give each
+   branch just its own slice. Needs verifying that the two patterns align branch-for-branch,
+   since `NULL` branches drop out of aggregation (405 paths from 408 branches).
+3. **`pipeline_years()` / `pipeline_states()` in `R/helpers.R` are now dead code** — the
+   `years`/`states` targets are hardcoded again, and `P2V_YEARS`/`P2V_STATES` are read by
+   nothing. Deleting them is safe (nothing depends on them) but the five tests covering them
+   should go at the same time.
+
+### Editing `years` or `states` costs less than it looks — measured
+Branch-level caching survives the edit, with one trap. Measured on a scratch pipeline:
+
+- **Existing per-branch work is reused.** Extending 2018:2019 to 2018:2020 re-ran only the two
+  new 2020 branches. Restoring a previous value re-ran nothing at all.
+- **Write `2018:2018`, not `2018`.** `2018:2025` is integer; a bare `2018` is double, so the
+  slice hashes differently and the pilot year's branches re-run. `2018:2018` re-runs zero.
+- **Anything consuming an upstream *aggregate* re-runs in full** regardless — that is item 2
+  above. In the test, the aggregate-consuming target re-ran all its branches on every edit.
+- `tar_outdated()` cannot show any of this: it reports the pattern name and never expands
+  branches, so it looked identical in every case. Count actual executions instead.
 
 ## R style conventions
 - Use tidyverse packages where possible.
