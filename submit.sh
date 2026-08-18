@@ -5,10 +5,10 @@
 #SBATCH --partition=scavenge
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=100GB
+#SBATCH --mem=20GB
 #SBATCH --output=job_outputs/out.txt
 #SBATCH -e job_outputs/err.txt
 
 module add R/4.4.1-foss-2022b
 
-R -e "targets::tar_make(physician_year_panel_data)"
+R -e "targets::tar_make()"
